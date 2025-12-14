@@ -1,0 +1,36 @@
+[tool.ruff]
+line-length = 100
+lint.select = ["E","F","W","I"]
+target-version = "py311"
+exclude = ["venv",".venv","build","dist"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:.*import python_multipart.*:PendingDeprecationWarning",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "digital-student-assistant"
+version = "0.1.0"
+description = "..."
+readme = "README.md"
+requires-python = ">=3.10"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["tests*", "docs*", "reports*", "EVIDENCE*", "security*", "htmlcov*"]
