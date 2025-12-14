@@ -1,0 +1,12 @@
+timeout: 5m
+ignore-unfixed: true
+severity:
+  - CRITICAL
+  - HIGH
+  - MEDIUM
+vuln-type:
+  - os
+  - library
+scanners:
+  - vuln
+  - secret
