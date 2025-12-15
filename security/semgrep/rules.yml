@@ -1,0 +1,18 @@
+rules:
+  - id: python-subprocess-shell
+    languages: [python]
+    message: Avoid subprocess calls with shell=True to reduce shell injection risk.
+    metadata:
+      category: security
+      cwe: "CWE-78"
+    pattern: subprocess.$FUNC(..., shell=True, ...)
+    severity: ERROR
+
+  - id: python-eval-use
+    languages: [python]
+    message: Avoid eval() on dynamic input; prefer safer parsing or mapping logic.
+    metadata:
+      category: security
+      cwe: "CWE-95"
+    pattern: eval($EXPR)
+    severity: WARNING

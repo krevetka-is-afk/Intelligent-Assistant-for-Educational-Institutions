@@ -1,0 +1,3 @@
+[submodule "docs/technical-specification-for-IAfEI"]
+	path = docs/technical-specification-for-IAfEI
+	url = https://github.com/krevetka-is-afk/technical-specification-for-IAfEI.git

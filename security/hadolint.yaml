@@ -1,0 +1,9 @@
+failure-threshold: warning
+no-color: true
+ignored:
+  - DL3008  # allow mixed apt sources when mirrors differ in CI
+  - DL3018  # allow unpinned apt dependencies where patch pins are impractical
+  - DL3013  # allow pip-managed dependencies from requirements.txt
+trustedRegistries:
+  - docker.io
+  - ghcr.io

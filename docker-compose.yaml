@@ -1,0 +1,57 @@
+version: "3.9"
+
+services:
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_DB: db_name
+  #     POSTGRES_USER: db_user
+  #     POSTGRES_PASSWORD: db_pass
+  #   profiles: ["dev"]
+  #   volumes:
+  #     - pg-data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U db_user -d db_name"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #   restart: unless-stopped
+
+  app:
+    build: .
+    # depends_on:
+    #   db:
+    #     condition: service_healthy
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      # - DATABASE_URL=${DEV_DATABASE_URL:-postgresql+psycopg2://db_user:db_pass@db:5432/db_name}
+      - JWT_SECRET=${DEV_JWT_SECRET:?set DEV_JWT_SECRET in .env}
+    profiles: ["dev"]
+    volumes:
+      - app-data:/app/data
+    tmpfs:
+      - /tmp:rw,size=64m
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./security/seccomp/default.json
+    cap_drop:
+      - ALL
+    pids_limit: 120
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys,urllib.request as u; u.urlopen('http://127.0.0.1:8000/health').read(); sys.exit(0)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    user: "1000:1000"
+
+volumes:
+  app-data:
+    driver: local
+  # pg-data:
+  #   driver: local
