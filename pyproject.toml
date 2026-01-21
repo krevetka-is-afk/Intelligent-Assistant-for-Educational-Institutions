@@ -44,6 +44,11 @@ dependencies = [
     "langchain>=1.2.6",
     "langchain-ollama>=1.0.1",
     "langchain-chroma>=1.1.0",
+    "pandas>=2.3.3",
+    "pypdf2>=3.0.1",
+    "langchain-community>=0.4.1",
+    "streamlit>=1.53.0",
+    "langchain-classic>=1.0.1",
 ]
 
 [dependency-groups]
