@@ -5,10 +5,11 @@ FROM python:3.11-slim AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# hadolint ignore=DL3008
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        build-essential=12.9 \
-        gcc=4:12.2.0-3 && \
+        build-essential \
+        gcc && \
     rm -rf /var/lib/apt/lists/*
 
 # uv
@@ -49,11 +50,13 @@ ENV PATH=/app/bin:$PATH \
     PYTHONFAULTHANDLER=1 \
     PYTHONUNBUFFERED=1
 
+# hadolint ignore=DL3008
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        libpq5=15.15-0+deb12u1 \
-        gosu=1.14-1 && \
+        libpq5 \
+        gosu && \
     rm -rf /var/lib/apt/lists/*
+
 
 RUN addgroup --gid ${APP_GID} appgroup && \
     adduser --disabled-password --gecos '' \
