@@ -39,7 +39,7 @@ uvicorn server.app.main:app --reload
 client
 
 ```bash
-streamlit run src/client/streamlit_app.py
+streamlit run src/client/app/streamlit_app.py
 ```
 
 ## Docker
