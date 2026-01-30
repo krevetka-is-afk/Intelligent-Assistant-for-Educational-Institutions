@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 ############################
 # Build stage
 ############################
@@ -7,11 +5,10 @@ FROM python:3.11-slim AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Системные зависимости для сборки wheel'ов
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        build-essential \
-        gcc && \
+        build-essential=12.9 \
+        gcc=4:12.2.0-3 && \
     rm -rf /var/lib/apt/lists/*
 
 # uv
@@ -26,18 +23,14 @@ ENV UV_PYTHON=python3.11 \
 
 WORKDIR /_project
 
-# Сначала только метаданные (кэш)
 COPY pyproject.toml uv.lock ./
 
-# Установка зависимостей без проекта
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --no-dev --no-install-project --frozen
 
-# Теперь код
 COPY src/ src/
 COPY VERSION ./
 
-# Установка проекта
 RUN --mount=type=cache,target=/root/.cache/uv \
     sed -Ei "s/^(version = \")0\.0\.0(\")$/\1$(cat VERSION)\2/" pyproject.toml && \
     uv sync --no-dev --no-editable --frozen
@@ -56,14 +49,12 @@ ENV PATH=/app/bin:$PATH \
     PYTHONFAULTHANDLER=1 \
     PYTHONUNBUFFERED=1
 
-# Runtime-only системные зависимости (gosu — для сброса привилегий в entrypoint)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        libpq5 \
-        gosu && \
+        libpq5=15.15-0+deb12u1 \
+        gosu=1.14-1 && \
     rm -rf /var/lib/apt/lists/*
 
-# Пользователь
 RUN addgroup --gid ${APP_GID} appgroup && \
     adduser --disabled-password --gecos '' \
       --uid ${APP_UID} \
@@ -71,12 +62,10 @@ RUN addgroup --gid ${APP_GID} appgroup && \
       --home /app \
       appuser
 
-# Копируем готовое venv + код
 COPY --from=build --chown=appuser:appgroup /app /app
 
-# Entrypoint запускается от root, правит права на volume с векторной БД, затем переключается на appuser
-COPY scripts/entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+COPY scripts/entrypoint.sh /entrypoint.sh
+RUN chmod 755 /entrypoint.sh
 
 WORKDIR /app
 
@@ -85,5 +74,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health').read()"
 
-ENTRYPOINT ["/app/entrypoint.sh"]
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uvicorn", "server.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
