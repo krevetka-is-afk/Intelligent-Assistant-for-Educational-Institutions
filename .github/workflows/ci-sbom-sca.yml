@@ -5,12 +5,14 @@ on:
   push:
     paths:
       - "**/*.py"
-      - "requirements*.txt"
+      - "pyproject.toml"
+      - "uv.lock"
       - ".github/workflows/ci-sbom-sca.yml"
   pull_request:
     paths:
       - "**/*.py"
-      - "requirements*.txt"
+      - "pyproject.toml"
+      - "uv.lock"
       - ".github/workflows/ci-sbom-sca.yml"
 
 permissions:
