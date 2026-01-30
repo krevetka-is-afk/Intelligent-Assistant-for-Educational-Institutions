@@ -15,8 +15,13 @@ uv venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
 uv sync --group dev
 export PYTHONPATH=.
+uv run uvicorn src.server.app.main:app --reload
+```
 
-uvicorn server.app.main:app --reload
+client
+
+```bash
+uv run streamlit run src/client/streamlit_app.py
 ```
 
 ### Запуск через `pip`
@@ -28,8 +33,13 @@ python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
 pip install .
 export PYTHONPATH=.
-
 uvicorn server.app.main:app --reload
+```
+
+client
+
+```bash
+streamlit run src/client/streamlit_app.py
 ```
 
 ## Docker
