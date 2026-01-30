@@ -18,7 +18,7 @@ services:
   #   restart: unless-stopped
 
   app:
-    build: .
+    build: ./
     # depends_on:
     #   db:
     #     condition: service_healthy
@@ -29,10 +29,10 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       # - DATABASE_URL=${DEV_DATABASE_URL:-postgresql+psycopg2://db_user:db_pass@db:5432/db_name}
-      - JWT_SECRET=${DEV_JWT_SECRET:?set DEV_JWT_SECRET in .env}
+      # - JWT_SECRET=${DEV_JWT_SECRET:?set DEV_JWT_SECRET in .env}
     profiles: ["dev"]
     volumes:
-      - app-data:/app/data
+      - app-data:/server/app/data
     tmpfs:
       - /tmp:rw,size=64m
     read_only: true

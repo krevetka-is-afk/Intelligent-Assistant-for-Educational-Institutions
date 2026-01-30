@@ -48,7 +48,7 @@ jobs:
     env:
       DATABASE_URL: "${{ secrets.DEV_DATABASE_URL || 'sqlite:///data/ci_test.sqlite' }}"
       TEST_DB_URL: "${{ secrets.DEV_TEST_DB_URL || 'sqlite:///data/ci_test.sqlite' }}"
-      JWT_SECRET: "${{ secrets.DEV_JWT_SECRET || 'ci-dev-jwt-secret' }}"
+      # JWT_SECRET: "${{ secrets.DEV_JWT_SECRET || 'ci-dev-jwt-secret' }}"
       PYTHONPATH: .
     steps:
       - name: Checkout
@@ -126,7 +126,7 @@ jobs:
     env:
       DATABASE_URL: "${{ secrets.DEV_DATABASE_URL || 'sqlite:///data/ci_test.sqlite' }}"
       TEST_DB_URL: "${{ secrets.DEV_TEST_DB_URL || 'sqlite:///data/ci_test.sqlite' }}"
-      JWT_SECRET: "${{ secrets.DEV_JWT_SECRET || 'ci-dev-jwt-secret' }}"
+      # JWT_SECRET: "${{ secrets.DEV_JWT_SECRET || 'ci-dev-jwt-secret' }}"
       PYTHONPATH: .
 
     steps:

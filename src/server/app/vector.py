@@ -1,14 +1,17 @@
 import os
+from importlib.resources import files
 
 import pandas as pd
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_ollama import OllamaEmbeddings
 
-df = pd.read_csv("server/data/ag_news.csv")
+DATA_PATH = files("server.data").joinpath("ag_news.csv")
+
+df = pd.read_csv(DATA_PATH)
 embeddings = OllamaEmbeddings(model="mxbai-embed-large:latest")
 
-db_location = "../chrome_langchain_db"
+db_location = "./chrome_langchain_db"
 add_documents = not os.path.exists(db_location)
 
 if add_documents:

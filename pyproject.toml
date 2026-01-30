@@ -1,32 +1,13 @@
-[tool.ruff]
-line-length = 100
-lint.select = ["E","F","W","I"]
-target-version = "py311"
-exclude = ["venv",".venv","build","dist"]
-
-[tool.isort]
-profile = "black"
-line_length = 100
-
-[tool.black]
-line-length = 100
-target-version = ['py310']
-
-[tool.pytest.ini_options]
-filterwarnings = [
-    "ignore:.*import python_multipart.*:PendingDeprecationWarning",
-]
-
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "digital-student-assistant"
+name = "intelligent-assistant-for-educational-institutions"
 version = "0.1.0"
 description = "..."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 dependencies = [
     "fastapi==0.124.4",
@@ -63,8 +44,34 @@ dev = [
 ]
 
 [tool.setuptools]
-package-dir = {"" = "."}
+package-dir = {"" = "src"}
+include-package-data = true
+
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+where = ["src"]
+include = ["server*", "client*"]
 exclude = ["tests*", "docs*", "reports*", "EVIDENCE*", "security*", "htmlcov*"]
+
+[tool.setuptools.package-data]
+server = ["data/*.csv"]
+
+
+[tool.ruff]
+line-length = 100
+lint.select = ["E", "F", "W", "I"]
+target-version = "py311"
+exclude = ["venv", ".venv", "build", "dist"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:.*import python_multipart.*:PendingDeprecationWarning",
+]
