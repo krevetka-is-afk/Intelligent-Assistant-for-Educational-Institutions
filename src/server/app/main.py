@@ -1,21 +1,14 @@
+import uvicorn
 from fastapi import FastAPI, Request
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama.llms import OllamaLLM
 
+from . import config
 from .vector import retriever
 
 app = FastAPI()
-model = OllamaLLM(model="gemma2:2b")
-template = """
-You are a helpful assistant that helps students find specific information in University sources.
-
-Here is the information you have access to: {information}
-
-Given the student's question,
-provide a concise and accurate answer based on the information provided.
-
-Student's question: {question}
-"""
+model = OllamaLLM(model=config.model)
+template = config.template
 
 prompt = ChatPromptTemplate.from_template(template)
 chain = prompt | model
@@ -45,3 +38,9 @@ async def ask(request: Request):
     except Exception as e:
         print("Error:", e)
         return {"error": str(e)}
+
+
+if __name__ == "__main__":
+    print("Server start")
+    print("Documentation API: http://localhost:8000/docs")
+    uvicorn.run(app, host="0.0.0.0", port=8000)
