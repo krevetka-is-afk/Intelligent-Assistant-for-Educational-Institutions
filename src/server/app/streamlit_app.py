@@ -40,7 +40,7 @@ promt = st.chat_input("pass your question here")
 
 
 def llm(promt):
-    question = str(prompt)
+    question = str(promt)
 
     information = retriever.invoke(question)
 
