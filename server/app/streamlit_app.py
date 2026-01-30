@@ -8,7 +8,8 @@ from langchain_core.prompts import ChatPromptTemplate
 
 # from watsonx langchain import LangChainInterface
 from langchain_ollama.llms import OllamaLLM
-from vector import retriever
+
+from .vector import retriever
 
 model = OllamaLLM(model="gemma2:2b")
 

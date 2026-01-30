@@ -5,7 +5,7 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_ollama import OllamaEmbeddings
 
-df = pd.read_csv("../data/ag_news.csv")
+df = pd.read_csv("server/data/ag_news.csv")
 embeddings = OllamaEmbeddings(model="mxbai-embed-large:latest")
 
 db_location = "../chrome_langchain_db"
