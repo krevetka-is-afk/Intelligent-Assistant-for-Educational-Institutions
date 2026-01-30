@@ -53,8 +53,7 @@ ENV PATH=/app/bin:$PATH \
 # hadolint ignore=DL3008
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        libpq5 \
-        gosu && \
+        libpq5 && \
     rm -rf /var/lib/apt/lists/*
 
 
@@ -66,16 +65,15 @@ RUN addgroup --gid ${APP_GID} appgroup && \
       appuser
 
 COPY --from=build --chown=appuser:appgroup /app /app
-
-COPY scripts/entrypoint.sh /entrypoint.sh
-RUN chmod 755 /entrypoint.sh
+# /app is 700 by default; allow root to read/exec so CMD can run /app/bin/python
+RUN chmod -R a+rX /app
 
 WORKDIR /app
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health').read()"
+  CMD /app/bin/python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health').read()"
 
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["uvicorn", "server.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Use venv Python (works after chmod -R a+rX /app). Rebuild with --no-cache if you changed permissions.
+CMD ["/app/bin/python", "-m", "uvicorn", "server.app.main:app", "--host", "0.0.0.0", "--port", "8000"]

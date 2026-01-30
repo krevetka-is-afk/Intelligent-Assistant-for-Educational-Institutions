@@ -28,15 +28,15 @@ services:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
-      - VECTOR_DB_DIR=/app/chrome_langchain_db
+      - VECTOR_DB_DIR=/data
       # - DATABASE_URL=${DEV_DATABASE_URL:-postgresql+psycopg2://db_user:db_pass@db:5432/db_name}
       # - JWT_SECRET=${DEV_JWT_SECRET:?set DEV_JWT_SECRET in .env}
     profiles: ["dev"]
     volumes:
-      - app-data:/app/chrome_langchain_db
+      - app-data:/data
     tmpfs:
       - /tmp:rw,size=64m
-    read_only: true
+    # read_only disabled so the app can run uvicorn from /app and write to /data
     security_opt:
       - no-new-privileges:true
       - seccomp=./security/seccomp/default.json
@@ -45,11 +45,11 @@ services:
     pids_limit: 120
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import sys,urllib.request as u; u.urlopen('http://127.0.0.1:8000/health').read(); sys.exit(0)"]
+      test: ["CMD", "/app/bin/python", "-c", "import sys,urllib.request as u; u.urlopen('http://127.0.0.1:8000/health').read(); sys.exit(0)"]
       interval: 30s
       timeout: 3s
       retries: 3
-    # Do not set user: so the entrypoint runs as root and can chown the volume for appuser
+    # Run as root so the app can write to the volume /data (volume is root-owned)
 
 volumes:
   app-data:
