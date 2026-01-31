@@ -29,7 +29,10 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       VECTOR_DB_DIR: /data
+      OLLAMA_HOST: http://host.docker.internal:11434  # Connect to host's Ollama
       # DATABASE_URL: postgresql+psycopg2://db_user:db_pass@db:5432/db_name
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - app-data:/data
     tmpfs:
@@ -61,12 +64,6 @@ services:
     image: myapp-client
     ports:
       - "8501:8501"
-    command:
-      - streamlit
-      - run
-      - /client/app/streamlit_app.py
-      - --server.port=8501
-      - --server.address=0.0.0.0
     environment:
       STREAMLIT_SERVER_ADDRESS: 0.0.0.0
       STREAMLIT_SERVER_PORT: "8501"

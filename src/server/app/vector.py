@@ -7,7 +7,7 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_ollama import OllamaEmbeddings
 
-DATA_PATH = files("server.data").joinpath("ag_news.csv")
+DATA_PATH = files("src.server.data").joinpath("ag_news.csv")
 
 df = pd.read_csv(DATA_PATH)
 embeddings = OllamaEmbeddings(model="mxbai-embed-large:latest")

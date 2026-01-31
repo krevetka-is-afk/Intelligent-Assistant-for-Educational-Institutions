@@ -59,14 +59,15 @@ RUN addgroup --gid ${APP_GID} appgroup && \
       --home /app appuser
 
 COPY --from=build --chown=appuser:appgroup /app /app
-RUN chmod -R a+rX /app
+COPY --from=build --chown=appuser:appgroup /_project/src/server /server
+RUN chmod -R a+rX /app /server
 
-WORKDIR /app
+WORKDIR /server
 # USER appuser # if uncomment cause to fail
 
 EXPOSE 8000
 
-CMD ["/app/bin/python", "-m", "uvicorn", "server.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/app/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ############################
 # Runtime stage: client
@@ -88,11 +89,12 @@ RUN addgroup --gid ${APP_GID} appgroup && \
       --home /app appuser
 
 COPY --from=build --chown=appuser:appgroup /app /app
-RUN chmod -R a+rX /app
+COPY --from=build --chown=appuser:appgroup /_project/src/client /client
+RUN chmod -R a+rX /app /client
 
-# WORKDIR /app
+WORKDIR /client
 # USER appuser
 
 EXPOSE 8501
 
-CMD ["/app/bin/python", "-m", "streamlit", "run", "client/app/streamlit_app.py"]
+CMD ["/app/bin/python", "-m", "streamlit", "run", "app/streamlit_app.py"]

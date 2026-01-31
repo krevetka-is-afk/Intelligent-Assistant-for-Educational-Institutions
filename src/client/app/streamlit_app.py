@@ -1,7 +1,13 @@
+import os
+
 import requests
 import streamlit as st
 
-url = "http://localhost:8000/ask"
+# url = "http://localhost:8000/ask"
+# API_URL = "http://server:8000/ask"
+
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+API_URL = f"{API_BASE_URL}/ask"
 
 st.title("ask about study process")
 
@@ -17,7 +23,7 @@ promt = st.chat_input("pass your question here")
 def get_response(promt):
     question = str(promt)
 
-    response = requests.post(url=url, json={"question": question})
+    response = requests.post(url=API_URL, json={"question": question})
     return response
 
 
@@ -27,7 +33,7 @@ if promt:
 
     response = get_response(promt)
     if response.status_code == 200:
-        st.chat_message("assistant").markdown(response.json()["response"])
+        st.chat_message("assistant").markdown(response.json().get("response"))
     else:
         st.error(f"Error fetching items: Status code {response.status_code}")
 

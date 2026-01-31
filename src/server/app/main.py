@@ -1,5 +1,8 @@
+import os
+
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama.llms import OllamaLLM
 
@@ -7,7 +10,17 @@ from . import config
 from .vector import retriever
 
 app = FastAPI()
-model = OllamaLLM(model=config.model)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8501", "http://client:8501"],  # Add your client URLs
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+ollama_host = os.getenv("OLLAMA_HOST", config.ollama_port)
+model = OllamaLLM(model=config.model, base_url=ollama_host)
 template = config.template
 
 prompt = ChatPromptTemplate.from_template(template)
@@ -32,8 +45,8 @@ async def ask(request: Request):
         if not question:
             return {"error": "Can not find question"}
         information = retriever.invoke(question)
-        result = chain.invoke({"information": [information], "question": question})
-        return {"response": result}
+        response = chain.invoke({"information": [information], "question": question})
+        return {"response": response}
 
     except Exception as e:
         print("Error:", e)

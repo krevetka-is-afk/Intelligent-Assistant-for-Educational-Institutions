@@ -9,3 +9,4 @@ provide a concise and accurate answer based on the information provided.
 
 Student's question: {question}
 """
+ollama_port = "http://localhost:11434"
