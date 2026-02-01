@@ -1,43 +1,100 @@
+############################
+# Build stage (shared)
+############################
 FROM python:3.11-slim AS build
-WORKDIR /build
+
+ENV DEBIAN_FRONTEND=noninteractive
 
 # hadolint ignore=DL3008
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        build-essential \
-        gcc && \
-    rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc \
+ && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt ./
+COPY --from=ghcr.io/astral-sh/uv:0.4 /uv /usr/local/bin/uv
 
-RUN pip install --no-cache-dir --prefix=/install --requirement requirements.txt
+ENV UV_PYTHON=python3.11 \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PROJECT_ENVIRONMENT=/app \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1
 
-COPY . .
+WORKDIR /_project
 
-FROM python:3.11-slim AS runtime
+COPY pyproject.toml uv.lock ./
 
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONFAULTHANDLER=1
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --no-dev --no-install-project --frozen
+
+# COPY src/server /server
+# COPY src/client /client
+COPY ./src ./src
+
+COPY VERSION ./
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    sed -Ei "s/^(version = \")0\.0\.0(\")$/\1$(cat VERSION)\2/" pyproject.toml && \
+    uv sync --no-dev --no-editable --frozen
+
+
+############################
+# Runtime stage: server
+############################
+FROM python:3.11-slim AS server
 
 ARG APP_UID=1000
 ARG APP_GID=1000
+
+ENV PATH=/app/bin:$PATH \
+    PYTHONUNBUFFERED=1
+
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN addgroup --gid ${APP_GID} appgroup && \
-    adduser --disabled-password --gecos '' --uid ${APP_UID} --gid ${APP_GID} --home /app \
-      --shell /usr/sbin/nologin appuser && \
-    mkdir -p /app/data && chown -R appuser:appgroup /app/data /app
+    adduser --disabled-password --gecos '' \
+      --uid ${APP_UID} \
+      --gid ${APP_GID} \
+      --home /app appuser
 
-WORKDIR /app
+COPY --from=build --chown=appuser:appgroup /app /app
+COPY --from=build --chown=appuser:appgroup /_project/src/server /server
+RUN chmod -R a+rX /app /server
 
-COPY --from=build --chown=appuser:appgroup /install /usr/local
-
-COPY --from=build --chown=appuser:appgroup /build .
+WORKDIR /server
+# USER appuser # if uncomment cause to fail
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD python -c "import sys,urllib.request as u; u.urlopen('http://127.0.0.1:8000/health').read(); sys.exit(0)" || exit 1
+CMD ["/app/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
-USER appuser
+############################
+# Runtime stage: client
+############################
+FROM python:3.11-slim AS client
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ARG APP_UID=1000
+ARG APP_GID=1000
+
+ENV PATH=/app/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    STREAMLIT_SERVER_PORT=8501 \
+    STREAMLIT_SERVER_ADDRESS=0.0.0.0
+
+RUN addgroup --gid ${APP_GID} appgroup && \
+    adduser --disabled-password --gecos '' \
+      --uid ${APP_UID} \
+      --gid ${APP_GID} \
+      --home /app appuser
+
+COPY --from=build --chown=appuser:appgroup /app /app
+COPY --from=build --chown=appuser:appgroup /_project/src/client /client
+RUN chmod -R a+rX /app /client
+
+WORKDIR /client
+# USER appuser
+
+EXPOSE 8501
+
+CMD ["/app/bin/python", "-m", "streamlit", "run", "app/streamlit_app.py"]

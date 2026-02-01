@@ -6,20 +6,47 @@
 
 ## Быстрый старт
 
-```bash
-git submodule update --init --recursive  # или клонируйте с флагом --recurse-submodules
-# python3 -m venv .venv
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
-pip install -r requirements.txt -r requirements-dev.txt
-export PYTHONPATH=.
-```
+### Локальный запуск (рекомендуемый способ — через `uv` и `pyproject.toml`)
 
 ```bash
-uvicorn app.main:app --reload
+git submodule update --init --recursive  # или клонируйте с флагом --recurse-submodules
+
+uv venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
+uv sync --group dev
+export PYTHONPATH=.
+uv run uvicorn src.server.app.main:app --reload
+```
+
+client
+
+```bash
+uv run streamlit run src/client/app/streamlit_app.py
+```
+
+### Запуск через `pip`
+
+`pyproject.toml` источник зависимостей При желании можно установить проект напрямую:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
+pip install .
+export PYTHONPATH=.
+uvicorn src.server.app.main:app --reload
+```
+
+client
+
+```bash
+streamlit run src/client/app/streamlit_app.py
 ```
 
 ## Docker
+
+Для сборки и запуска в Docker используется тот же `pyproject.toml`, зависимости устанавливаются через `uv`.
+
+В контейнере путь к базе векторного индекса настраивается переменной окружения `VECTOR_DB_DIR` и по умолчанию настроен в `docker-compose.yaml` на `/app/chrome_langchain_db`, примонтированный как volume.
 
 ```bash
 docker compose --profile dev up --build
