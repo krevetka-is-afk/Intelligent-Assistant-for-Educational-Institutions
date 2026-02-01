@@ -21,7 +21,7 @@ uv run uvicorn src.server.app.main:app --reload
 client
 
 ```bash
-uv run streamlit run src/client/streamlit_app.py
+uv run streamlit run src/client/app/streamlit_app.py
 ```
 
 ### Запуск через `pip`

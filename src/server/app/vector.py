@@ -1,5 +1,4 @@
 import os
-from importlib.resources import files
 from pathlib import Path
 
 import pandas as pd
@@ -7,10 +6,12 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_ollama import OllamaEmbeddings
 
-DATA_PATH = files("src.server.data").joinpath("ag_news.csv")
+from . import config
+
+DATA_PATH = Path(__file__).resolve().parent.parent / "data/ag_news.csv"
 
 df = pd.read_csv(DATA_PATH)
-embeddings = OllamaEmbeddings(model="mxbai-embed-large:latest")
+embeddings = OllamaEmbeddings(model=config.embed_model)
 
 _default_db_dir = Path(__file__).resolve().parent.parent / "chrome_langchain_db"
 db_location = os.getenv("VECTOR_DB_DIR", str(_default_db_dir))

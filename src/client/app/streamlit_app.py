@@ -31,10 +31,14 @@ if promt:
     st.chat_message("user").markdown(promt)
     st.session_state.messages.append({"role": "user", "content": promt})
 
-    response = get_response(promt)
-    if response.status_code == 200:
-        st.chat_message("assistant").markdown(response.json().get("response"))
-    else:
-        st.error(f"Error fetching items: Status code {response.status_code}")
-
-    st.session_state.messages.append({"role": "assistant", "content": response})
+    try:
+        response = get_response(promt)
+        if response.status_code == 200:
+            st.chat_message("assistant").markdown(response.json().get("response"))
+            st.session_state.messages.append(
+                {"role": "assistant", "content": response.json().get("response")}
+            )
+        else:
+            st.error("Error fetching items")
+    except Exception as e:
+        print("Error while handling /ask request:", e)

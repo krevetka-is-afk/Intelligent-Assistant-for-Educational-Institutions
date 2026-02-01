@@ -1,4 +1,5 @@
 import os
+import traceback
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -49,8 +50,9 @@ async def ask(request: Request):
         return {"response": response}
 
     except Exception as e:
-        print("Error:", e)
-        return {"error": str(e)}
+        print("Error while handling /ask request:", e)
+        print(traceback.format_exc())
+        return {"error": "An internal server error occurred."}
 
 
 if __name__ == "__main__":

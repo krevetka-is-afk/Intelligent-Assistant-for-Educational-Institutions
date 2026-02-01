@@ -1,4 +1,5 @@
 model = "gemma2:2b"
+embed_model = "mxbai-embed-large:latest"
 template = """
 You are a helpful assistant that helps students find specific information in University sources.
 

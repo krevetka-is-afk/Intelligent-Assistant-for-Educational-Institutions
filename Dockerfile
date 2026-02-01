@@ -27,7 +27,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # COPY src/server /server
 # COPY src/client /client
-COPY src ./src
+COPY ./src ./src
 
 COPY VERSION ./
 
