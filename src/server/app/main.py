@@ -1,7 +1,6 @@
+import logging
 import os
-import traceback
 
-import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.prompts import ChatPromptTemplate
@@ -9,6 +8,15 @@ from langchain_ollama.llms import OllamaLLM
 
 from . import config
 from .vector import retriever
+
+logger = logging.getLogger("server")
+logger.setLevel(logging.DEBUG)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+logger.propagate = False
 
 app = FastAPI()
 
@@ -40,22 +48,21 @@ async def health_check():
 
 @app.post("/ask")
 async def ask(request: Request):
+    logger.info("Received /ask request")
+
     try:
         data = await request.json()
         question = data.get("question")
         if not question:
+            logger.warning("Missing 'question' field in request")
             return {"error": "Can not find question"}
+
         information = retriever.invoke(question)
+        logger.debug("Retriever returned data")
         response = chain.invoke({"information": [information], "question": question})
+        logger.info("Successfully processed /ask request")
         return {"response": response}
 
-    except Exception as e:
-        print("Error while handling /ask request:", e)
-        print(traceback.format_exc())
+    except Exception:
+        logger.exception("Unhandled exception in /ask")
         return {"error": "An internal server error occurred."}
-
-
-if __name__ == "__main__":
-    print("Server start")
-    print("Documentation API: http://localhost:8000/docs")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
