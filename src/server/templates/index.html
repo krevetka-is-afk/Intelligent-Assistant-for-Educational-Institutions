@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Educational Assistant</title>
+    <style>
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #f0f2f5;
+            color: #1a1a2e;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        header {
+            width: 100%;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            color: #fff;
+            padding: 2rem 1rem;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 1.75rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+        }
+
+        header p {
+            margin-top: 0.5rem;
+            color: #a8b2d1;
+            font-size: 0.95rem;
+        }
+
+        main {
+            width: 100%;
+            max-width: 800px;
+            padding: 2rem 1rem;
+            flex: 1;
+        }
+
+        /* Question form */
+        .question-card {
+            background: #fff;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        }
+
+        .question-card label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            font-size: 0.95rem;
+        }
+
+        .input-row {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .input-row input[type="text"] {
+            flex: 1;
+            padding: 0.75rem 1rem;
+            border: 1.5px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .input-row input[type="text"]:focus {
+            border-color: #0f3460;
+        }
+
+        .input-row button {
+            padding: 0.75rem 1.5rem;
+            background: #0f3460;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+            white-space: nowrap;
+        }
+
+        .input-row button:hover {
+            background: #1a1a2e;
+        }
+
+        .input-row button:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+        }
+
+        /* Answer area */
+        .answer-section {
+            margin-top: 1.5rem;
+            display: none;
+        }
+
+        .answer-section.visible {
+            display: block;
+        }
+
+        .answer-card {
+            background: #fff;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        }
+
+        .answer-card h2 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            color: #0f3460;
+        }
+
+        .answer-text {
+            line-height: 1.7;
+            font-size: 0.95rem;
+            white-space: pre-wrap;
+        }
+
+        .meta-bar {
+            margin-top: 1rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid #e5e7eb;
+            font-size: 0.8rem;
+            color: #6b7280;
+            display: flex;
+            gap: 1.25rem;
+            flex-wrap: wrap;
+        }
+
+        /* Sources */
+        .sources-section {
+            margin-top: 1rem;
+        }
+
+        .sources-toggle {
+            background: none;
+            border: 1.5px solid #d1d5db;
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+            cursor: pointer;
+            color: #374151;
+            transition: background 0.2s;
+        }
+
+        .sources-toggle:hover {
+            background: #f9fafb;
+        }
+
+        .sources-list {
+            display: none;
+            margin-top: 0.75rem;
+        }
+
+        .sources-list.open {
+            display: block;
+        }
+
+        .source-item {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+            line-height: 1.6;
+        }
+
+        .source-item .source-meta {
+            margin-top: 0.5rem;
+            font-size: 0.75rem;
+            color: #6b7280;
+        }
+
+        /* Loading spinner */
+        .spinner {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 2.5px solid #fff;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            vertical-align: middle;
+            margin-right: 0.5rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Error */
+        .error-msg {
+            background: #fef2f2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1.5rem;
+            font-size: 0.9rem;
+            display: none;
+        }
+
+        .error-msg.visible {
+            display: block;
+        }
+
+        /* Chat history */
+        .history-section {
+            margin-top: 2rem;
+        }
+
+        .history-section h3 {
+            font-size: 0.95rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            color: #374151;
+        }
+
+        .history-item {
+            background: #fff;
+            border-radius: 10px;
+            padding: 1rem 1.25rem;
+            margin-bottom: 0.75rem;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            cursor: pointer;
+            transition: box-shadow 0.2s;
+        }
+
+        .history-item:hover {
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .history-item .q {
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: #0f3460;
+        }
+
+        .history-item .a {
+            margin-top: 0.4rem;
+            font-size: 0.85rem;
+            color: #4b5563;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        footer {
+            text-align: center;
+            padding: 1.5rem;
+            font-size: 0.8rem;
+            color: #9ca3af;
+        }
+
+        @media (max-width: 600px) {
+            .input-row {
+                flex-direction: column;
+            }
+
+            header h1 {
+                font-size: 1.35rem;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>Educational Assistant</h1>
+    <p>Ask questions about your study process and get answers with sources</p>
+</header>
+
+<main>
+    <div class="question-card">
+        <label for="question-input">Your question</label>
+        <form id="ask-form" class="input-row">
+            <input
+                type="text"
+                id="question-input"
+                name="question"
+                placeholder="e.g. What are the main topics in today's news?"
+                autocomplete="off"
+                required
+            />
+            <button type="submit" id="submit-btn">Ask</button>
+        </form>
+    </div>
+
+    <div class="error-msg" id="error-msg"></div>
+
+    <div class="answer-section" id="answer-section">
+        <div class="answer-card">
+            <h2>Answer</h2>
+            <div class="answer-text" id="answer-text"></div>
+            <div class="meta-bar" id="meta-bar"></div>
+
+            <div class="sources-section">
+                <button class="sources-toggle" id="sources-toggle" type="button">
+                    Show sources
+                </button>
+                <div class="sources-list" id="sources-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="history-section" id="history-section" style="display:none;">
+        <h3>Previous questions</h3>
+        <div id="history-list"></div>
+    </div>
+</main>
+
+<footer>
+    Intelligent Assistant for Educational Institutions
+</footer>
+
+<script>
+    const form = document.getElementById("ask-form");
+    const input = document.getElementById("question-input");
+    const submitBtn = document.getElementById("submit-btn");
+    const answerSection = document.getElementById("answer-section");
+    const answerText = document.getElementById("answer-text");
+    const metaBar = document.getElementById("meta-bar");
+    const sourcesList = document.getElementById("sources-list");
+    const sourcesToggle = document.getElementById("sources-toggle");
+    const errorMsg = document.getElementById("error-msg");
+    const historySection = document.getElementById("history-section");
+    const historyList = document.getElementById("history-list");
+
+    const history = [];
+
+    sourcesToggle.addEventListener("click", () => {
+        sourcesList.classList.toggle("open");
+        sourcesToggle.textContent = sourcesList.classList.contains("open")
+            ? "Hide sources"
+            : "Show sources";
+    });
+
+    form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const question = input.value.trim();
+        if (!question) return;
+
+        // Reset UI
+        errorMsg.classList.remove("visible");
+        answerSection.classList.remove("visible");
+        sourcesList.classList.remove("open");
+        sourcesToggle.textContent = "Show sources";
+
+        // Loading state
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner"></span>Thinking...';
+
+        try {
+            const res = await fetch("/ask", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ question }),
+            });
+
+            const data = await res.json();
+
+            if (data.error) {
+                showError(data.error);
+                return;
+            }
+
+            // Display answer
+            answerText.textContent = data.response;
+
+            // Metadata
+            const meta = data.metadata || {};
+            metaBar.innerHTML = "";
+            if (meta.model) {
+                metaBar.innerHTML += `<span>Model: ${escapeHtml(meta.model)}</span>`;
+            }
+            if (meta.num_sources !== undefined) {
+                metaBar.innerHTML += `<span>Sources used: ${meta.num_sources}</span>`;
+            }
+
+            // Sources
+            sourcesList.innerHTML = "";
+            const sources = data.sources || [];
+            sources.forEach((src, i) => {
+                const item = document.createElement("div");
+                item.className = "source-item";
+                item.innerHTML = `${escapeHtml(src.content)}`;
+                if (src.metadata && Object.keys(src.metadata).length > 0) {
+                    const metaStr = Object.entries(src.metadata)
+                        .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(String(v))}`)
+                        .join(" | ");
+                    item.innerHTML += `<div class="source-meta">${metaStr}</div>`;
+                }
+                sourcesList.appendChild(item);
+            });
+
+            answerSection.classList.add("visible");
+
+            // Add to history
+            history.unshift({ question, answer: data.response });
+            renderHistory();
+
+        } catch (err) {
+            showError("Could not connect to the server. Please try again later.");
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Ask";
+        }
+    });
+
+    function showError(msg) {
+        errorMsg.textContent = msg;
+        errorMsg.classList.add("visible");
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement("div");
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function renderHistory() {
+        if (history.length === 0) {
+            historySection.style.display = "none";
+            return;
+        }
+        historySection.style.display = "block";
+        historyList.innerHTML = "";
+        history.forEach((item) => {
+            const el = document.createElement("div");
+            el.className = "history-item";
+            el.innerHTML = `
+                <div class="q">${escapeHtml(item.question)}</div>
+                <div class="a">${escapeHtml(item.answer)}</div>
+            `;
+            el.addEventListener("click", () => {
+                input.value = item.question;
+                input.focus();
+            });
+            historyList.appendChild(el);
+        });
+    }
+</script>
+
+</body>
+</html>
