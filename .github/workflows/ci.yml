@@ -188,7 +188,7 @@ jobs:
           docker build -t registry:5000/krevetka:ci .
 
       - name: Trivy scan
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@0.34.0
         with:
           image-ref: registry:5000/krevetka:ci
           format: 'json'
