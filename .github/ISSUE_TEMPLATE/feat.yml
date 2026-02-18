@@ -1,0 +1,173 @@
+name: Feature request
+description: Propose a new capability or improvement (with AC + DoD).
+title: "[Feat]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Feature request
+        Please be specific. Good issues include **context**, **scope**, **acceptance criteria**, and a **definition of done**.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the system is this primarily about?
+      multiple: false
+      options:
+        - area:web (UI)
+        - area:api (endpoints)
+        - area:data (DB / schema / migrations)
+        - area:ml (embeddings / recs)
+        - area:infra (Docker/compose/CI)
+        - area:obs (logging/metrics)
+        - area:docs (ADR/specs/runbooks)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: P0 blocks the sprint/demo; P1 important; P2 nice-to-have.
+      multiple: false
+      options:
+        - P0
+        - P1
+        - P2
+    validations:
+      required: true
+
+  - type: input
+    id: sprint
+    attributes:
+      label: Target sprint / milestone
+      description: "Example: Sprint N (date → date)"
+      placeholder: "Sprint X / KT1 / KT2"
+    validations:
+      required: false
+
+  - type: input
+    id: owner
+    attributes:
+      label: Owner / assignee suggestion
+      description: Who should drive this? (e.g., @krevetka-is-afk, @Sasha-A4, @lvfky)
+      placeholder: "@username"
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context / problem
+      description: What problem are we solving? Who is affected? Why now?
+      placeholder: |
+        - User role(s):
+        - Current behavior:
+        - Pain / risk:
+        - Business/academic reason:
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: One clear outcome (what success looks like).
+      placeholder: "As a <role>, I want <capability>, so that <benefit>."
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What is in / out? Keep MVP tight.
+      placeholder: |
+        In scope:
+        - ...
+        Out of scope:
+        - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed approach
+      description: Suggested implementation details, API shape, UX notes, or alternatives.
+      placeholder: |
+        Approach:
+        - ...
+        Alternatives considered:
+        - ...
+        Risks:
+        - ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria (AC)
+      description: Use objective, testable pass/fail bullets.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: dod
+    attributes:
+      label: Definition of Done (DoD)
+      description: Check what must be true before closing the issue.
+      options:
+        - label: AC met and verified (manual or automated)
+          required: true
+        - label: Tests added/updated (or explicitly not needed)
+          required: false
+        - label: Docs updated (README / ADR / runbook) if applicable
+          required: false
+        - label: Observability added (logs/metrics) if user-facing or critical path
+          required: false
+        - label: Security/privacy considered (authz, data exposure, secrets)
+          required: false
+
+  - type: textarea
+    id: observability
+    attributes:
+      label: Observability / metrics
+      description: What will we log/measure? Any SLO target?
+      placeholder: |
+        - Key logs:
+        - Metrics:
+        - SLO/p95 target:
+    validations:
+      required: false
+
+  - type: textarea
+    id: data
+    attributes:
+      label: Data / migrations impact
+      description: Any schema change, backfill, index, or pgvector change?
+      placeholder: |
+        - Schema changes:
+        - Migration plan:
+        - Backfill:
+        - Indexes:
+    validations:
+      required: false
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies / blockers
+      description: Link issues, PRs, ADRs, external constraints.
+      placeholder: |
+        - Depends on #...
+        - Blocked by ...
+    validations:
+      required: false
