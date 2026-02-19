@@ -1,8 +1,11 @@
 import logging
 import os
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama.llms import OllamaLLM
 
@@ -20,9 +23,16 @@ logger.propagate = False
 
 app = FastAPI()
 
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8501", "http://client:8501"],  # Add your client URLs
+    allow_origins=[
+        "http://localhost:8501",
+        "http://client:8501",
+        "http://localhost:8000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -46,6 +56,11 @@ async def health_check():
     return {"status": "ok"}
 
 
+@app.get("/web", response_class=HTMLResponse)
+async def web_interface(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+
 @app.post("/ask")
 async def ask(request: Request):
     logger.info("Received /ask request")
@@ -57,11 +72,28 @@ async def ask(request: Request):
             logger.warning("Missing 'question' field in request")
             return {"error": "Can not find question"}
 
-        information = retriever.invoke(question)
-        logger.debug("Retriever returned data")
-        response = chain.invoke({"information": [information], "question": question})
+        documents = retriever.invoke(question)
+        logger.debug("Retriever returned %d documents", len(documents))
+
+        response = chain.invoke({"information": [documents], "question": question})
         logger.info("Successfully processed /ask request")
-        return {"response": response}
+
+        sources = [
+            {
+                "content": doc.page_content,
+                "metadata": doc.metadata,
+            }
+            for doc in documents
+        ]
+
+        return {
+            "response": response,
+            "sources": sources,
+            "metadata": {
+                "model": config.model,
+                "num_sources": len(sources),
+            },
+        }
 
     except Exception:
         logger.exception("Unhandled exception in /ask")
