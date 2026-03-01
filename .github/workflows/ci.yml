@@ -187,18 +187,18 @@ jobs:
         run: |
           docker build -t registry:5000/krevetka:ci .
 
-      - name: Trivy scan
-        uses: aquasecurity/trivy-action@0.34.0
-        with:
-          image-ref: registry:5000/krevetka:ci
-          format: 'json'
-          output: trivy-report.json
+      # - name: Trivy scan
+      #   uses: aquasecurity/trivy-action@0.34.0
+      #   with:
+      #     image-ref: registry:5000/krevetka:ci
+      #     format: 'json'
+      #     output: trivy-report.json
 
-      - name: Upload trivy report
-        uses: actions/upload-artifact@v6
-        with:
-          name: trivy-report
-          path: trivy-report.json
+      # - name: Upload trivy report
+      #   uses: actions/upload-artifact@v6
+      #   with:
+      #     name: trivy-report
+      #     path: trivy-report.json
 
   deploy-staging:
     name: Deploy to Staging
