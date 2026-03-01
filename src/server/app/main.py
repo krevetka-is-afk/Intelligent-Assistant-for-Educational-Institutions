@@ -3,10 +3,9 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Security
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from fastapi.security import APIKeyHeader
 from fastapi.templating import Jinja2Templates
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama.llms import OllamaLLM
@@ -15,7 +14,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from . import config
-from .vector import retriever
+from .vector import get_retriever
 
 logger = logging.getLogger("server")
 logger.setLevel(logging.DEBUG)
@@ -27,7 +26,6 @@ if not logger.handlers:
 logger.propagate = False
 
 limiter = Limiter(key_func=get_remote_address)
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 app = FastAPI()
 app.state.limiter = limiter
@@ -45,17 +43,8 @@ app.add_middleware(
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-API-Key"],
+    allow_headers=["Content-Type"],
 )
-
-
-async def verify_api_key(api_key: str = Security(api_key_header)):
-    expected_key = os.getenv("API_KEY")
-    if not expected_key:
-        raise HTTPException(status_code=500, detail="API key not configured")
-    if api_key != expected_key:
-        raise HTTPException(status_code=403, detail="Invalid API Key")
-    return api_key
 
 
 ollama_host = os.getenv("OLLAMA_HOST", config.ollama_port)
@@ -83,7 +72,7 @@ async def web_interface(request: Request):
 
 @app.post("/ask")
 @limiter.limit("10/minute")
-async def ask(request: Request, api_key: str = Depends(verify_api_key)):
+async def ask(request: Request):
     logger.info("Received /ask request")
 
     try:
@@ -106,7 +95,7 @@ async def ask(request: Request, api_key: str = Depends(verify_api_key)):
         return {"error": "Question must not exceed 500 characters"}
 
     try:
-        documents = retriever.invoke(question)
+        documents = get_retriever().invoke(question)
         logger.debug("Retriever returned %d documents", len(documents))
     except ConnectionError:
         logger.error("Could not connect to vector store")
