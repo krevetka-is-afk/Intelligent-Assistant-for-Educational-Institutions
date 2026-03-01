@@ -19,7 +19,7 @@ dependencies = [
     "python-jose",
     "passlib",
     "bcrypt==5.0.0",
-    "python-multipart",
+    "python-multipart==0.0.22",
     "psycopg2-binary==2.9.11",
     "click>=8.1.7,<9",
     "langchain>=1.2.6",
@@ -32,6 +32,9 @@ dependencies = [
     "langchain-classic>=1.0.1",
     "jinja2>=3.1.0",
     "slowapi>=0.1.9",
+    "pillow>=12.1.1",
+    "protobuf>=6.33.5",
+    "langchain-core>=1.2.11",
 ]
 
 [dependency-groups]
