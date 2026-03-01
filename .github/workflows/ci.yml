@@ -60,7 +60,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: "**/uv.lock"
@@ -133,7 +133,7 @@ jobs:
           python-version: "3.11"
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: "**/uv.lock"
@@ -162,8 +162,7 @@ jobs:
       - name: Build package
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          uv pip install build
-          python -m build
+          uv run --with build python -m build
 
       - name: Upload build package
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -189,7 +188,7 @@ jobs:
           docker build -t registry:5000/krevetka:ci .
 
       - name: Trivy scan
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@0.34.0
         with:
           image-ref: registry:5000/krevetka:ci
           format: 'json'
