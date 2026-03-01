@@ -48,6 +48,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-API-Key"],
 )
 
+
 async def verify_api_key(api_key: str = Security(api_key_header)):
     expected_key = os.getenv("API_KEY")
     if not expected_key:
@@ -128,9 +129,7 @@ async def ask(request: Request, api_key: str = Depends(verify_api_key)):
     sources = [
         {
             "content": doc.page_content,
-            "metadata": {
-                k: v for k, v in doc.metadata.items() if k in _ALLOWED_METADATA_KEYS
-            },
+            "metadata": {k: v for k, v in doc.metadata.items() if k in _ALLOWED_METADATA_KEYS},
         }
         for doc in documents
     ]
