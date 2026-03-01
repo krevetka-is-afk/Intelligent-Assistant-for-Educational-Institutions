@@ -14,7 +14,8 @@ df = pd.read_csv(DATA_PATH)
 embeddings = OllamaEmbeddings(model=config.embed_model)
 
 _default_db_dir = Path(__file__).resolve().parent.parent / "chrome_langchain_db"
-db_location = os.getenv("VECTOR_DB_DIR", str(_default_db_dir))
+_raw_db_dir = os.getenv("VECTOR_DB_DIR", str(_default_db_dir))
+db_location = str(Path(_raw_db_dir).resolve())
 
 add_documents = not os.path.exists(db_location)
 
