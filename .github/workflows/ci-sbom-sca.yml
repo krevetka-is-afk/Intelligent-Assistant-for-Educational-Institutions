@@ -50,7 +50,7 @@ jobs:
 
       - name: Upload SBOM/SCA evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: SBOM-SCA_EVIDENCE
           path: EVIDENCE/SBOM-SCA
