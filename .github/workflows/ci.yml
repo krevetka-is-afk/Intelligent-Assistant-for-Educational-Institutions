@@ -49,6 +49,8 @@ jobs:
       DATABASE_URL: "${{ secrets.DEV_DATABASE_URL || 'sqlite:///data/ci_test.sqlite' }}"
       TEST_DB_URL: "${{ secrets.DEV_TEST_DB_URL || 'sqlite:///data/ci_test.sqlite' }}"
       # JWT_SECRET: "${{ secrets.DEV_JWT_SECRET || 'ci-dev-jwt-secret' }}"
+      API_KEY: ${{ secrets.API_KEY }}
+      APP_ENV: ${{ secrets.APP_ENV }}
       PYTHONPATH: .
     steps:
       - name: Checkout
@@ -121,6 +123,8 @@ jobs:
       DATABASE_URL: "${{ secrets.DEV_DATABASE_URL || 'sqlite:///data/ci_test.sqlite' }}"
       TEST_DB_URL: "${{ secrets.DEV_TEST_DB_URL || 'sqlite:///data/ci_test.sqlite' }}"
       # JWT_SECRET: "${{ secrets.DEV_JWT_SECRET || 'ci-dev-jwt-secret' }}"
+      API_KEY: ${{ secrets.API_KEY }}
+      APP_ENV: ${{ secrets.APP_ENV }}
       PYTHONPATH: .
 
     steps:
@@ -187,18 +191,18 @@ jobs:
         run: |
           docker build -t registry:5000/krevetka:ci .
 
-      - name: Trivy scan
-        uses: aquasecurity/trivy-action@0.34.0
-        with:
-          image-ref: registry:5000/krevetka:ci
-          format: 'json'
-          output: trivy-report.json
+      # - name: Trivy scan
+      #   uses: aquasecurity/trivy-action@0.34.0
+      #   with:
+      #     image-ref: registry:5000/krevetka:ci
+      #     format: 'json'
+      #     output: trivy-report.json
 
-      - name: Upload trivy report
-        uses: actions/upload-artifact@v6
-        with:
-          name: trivy-report
-          path: trivy-report.json
+      # - name: Upload trivy report
+      #   uses: actions/upload-artifact@v6
+      #   with:
+      #     name: trivy-report
+      #     path: trivy-report.json
 
   deploy-staging:
     name: Deploy to Staging

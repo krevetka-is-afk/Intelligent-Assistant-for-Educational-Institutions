@@ -8,17 +8,26 @@
 
 ### Локальный запуск (рекомендуемый способ — через `uv` и `pyproject.toml`)
 
+import docs if needed
+
 ```bash
 git submodule update --init --recursive  # или клонируйте с флагом --recurse-submodules
+```
 
+```bash
 uv venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
 uv sync --group dev
 export PYTHONPATH=.
+```
+
+start up server
+
+```bash
 uv run uvicorn src.server.app.main:app --reload
 ```
 
-client
+start up client
 
 ```bash
 uv run streamlit run src/client/app/streamlit_app.py
@@ -33,6 +42,11 @@ python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
 pip install .
 export PYTHONPATH=.
+```
+
+start up server
+
+```bash
 uvicorn src.server.app.main:app --reload
 ```
 
@@ -52,18 +66,24 @@ streamlit run src/client/app/streamlit_app.py
 docker compose --profile dev up --build
 ```
 
-## Contribute
+## Contribute with uv
 
 ```bash
-pre-commit install
+uv run pre-commit install
 ```
 
 before PR
 
 ```bash
-ruff check --fix .
-black .
-isort .
-pytest -q
-pre-commit run --all-files
+uv run ruff check --fix .
+uv run black .
+uv run isort .
+uv run pytest -q
+uv run pre-commit run --all-files
+```
+
+For a better contributing experience here is a ready script.
+
+```bash
+./uv-linters.sh
 ```
