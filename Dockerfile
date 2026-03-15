@@ -1,7 +1,7 @@
 ############################
 # Build stage (shared)
 ############################
-FROM python:3.11-slim AS build
+FROM python:3.12-slim AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=ghcr.io/astral-sh/uv:0.4 /uv /usr/local/bin/uv
 
-ENV UV_PYTHON=python3.11 \
+ENV UV_PYTHON=python3.12 \
     UV_PYTHON_DOWNLOADS=never \
     UV_PROJECT_ENVIRONMENT=/app \
     UV_LINK_MODE=copy \
@@ -39,7 +39,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ############################
 # Runtime stage: server
 ############################
-FROM python:3.11-slim AS server
+FROM python:3.12-slim AS server
 
 ARG APP_UID=1000
 ARG APP_GID=1000
@@ -72,7 +72,7 @@ CMD ["/app/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "-
 ############################
 # Runtime stage: client
 ############################
-FROM python:3.11-slim AS client
+FROM python:3.12-slim AS client
 
 ARG APP_UID=1000
 ARG APP_GID=1000
