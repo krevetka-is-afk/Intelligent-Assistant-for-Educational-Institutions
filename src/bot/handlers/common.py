@@ -6,7 +6,7 @@ from typing import Any, BinaryIO
 
 import pytesseract
 from PIL import Image, ImageOps
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 
 DEFAULT_OCR_LANG = "rus+eng"
 API_QUESTION_MAX_LENGTH = 500
