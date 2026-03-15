@@ -1,89 +1,149 @@
 # Intelligent-Assistant-for-Educational-Institutions
 
-Практико-ориентированный проект по созданию интеллектуального чат-бота для университета на основе RAG-архитектуры. Система будет использовать внутренние данные вуза (учебные планы, нормативные документы) для ответов на вопросы студентов и преподавателей.
+Практико-ориентированный проект по созданию интеллектуального ассистента для образовательных учреждений. В текущем состоянии репозиторий содержит:
+
+- RAG API на FastAPI (`src/server`)
+- веб-интерфейс на Streamlit (`src/client`) и html
+- сервисный слой Telegram-бота с историей запросов в БД (`src/bot`)
+- OCR/PDF-обработку и выдачу ответа вместе со списком источников
 
 ![CI](https://github.com/krevetka-is-afk/Intelligent-Assistant-for-Educational-Institutions/actions/workflows/ci.yml/badge.svg)
 
-## Быстрый старт
+## Что уже реализовано
 
-### Локальный запуск (рекомендуемый способ — через `uv` и `pyproject.toml`)
+- команды и сервисный слой бота
+- обработка текста, изображений через OCR и PDF
+- сохранение истории запросов в БД
+- ответ с перечнем использованных источников
 
-import docs if needed
+## Требования
 
-```bash
-git submodule update --init --recursive  # или клонируйте с флагом --recurse-submodules
+- Python 3.11+
+- [uv](https://docs.astral.sh/uv/)
+- локально установленный [Ollama](https://ollama.com/) с моделями:
+  - `gemma2:2b`
+  - `mxbai-embed-large:latest`
+- Tesseract OCR с языками `rus` и `eng` для локального OCR/PDF-сценария
+
+## Переменные окружения
+
+| Переменная | Где используется | Значение по умолчанию | Назначение |
+| --- | --- | --- | --- |
+| `OLLAMA_HOST` | `server` | `http://localhost:11434` | URL локального Ollama |
+| `VECTOR_DB_DIR` | `server` | `src/server/chrome_langchain_db` | Путь к директории с Chroma DB |
+| `API_BASE_URL` | `client`, `bot` | `http://localhost:8000` | Базовый URL FastAPI-сервера |
+| `DATABASE_URL` | `bot` | нет | База истории запросов Telegram-слоя |
+
+Пример локального `.env`:
+
+```env
+OLLAMA_HOST=http://localhost:11434
+VECTOR_DB_DIR=/absolute/path/to/chroma_db
+API_BASE_URL=http://localhost:8000
+DATABASE_URL=sqlite+aiosqlite:///./bot.db
 ```
 
+## Локальный запуск
+
+### 1. Установка зависимостей
+
 ```bash
+git submodule update --init --recursive
 uv venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
 uv sync --group dev
 export PYTHONPATH=.
 ```
 
-start up server
+### 2. Запуск API
 
 ```bash
+export OLLAMA_HOST=http://localhost:11434
+export VECTOR_DB_DIR="$(pwd)/src/server/chrome_langchain_db"
 uv run uvicorn src.server.app.main:app --reload
 ```
 
-start up client
+API будет доступно на `http://localhost:8000`, healthcheck: `http://localhost:8000/health`.
+
+### 3. Запуск веб-интерфейса
+
+Доступен вариант через `http://localhost:8000/web`
+
+Либо запуск Streamlit в отдельном терминале:
 
 ```bash
+source .venv/bin/activate
+export PYTHONPATH=.
+export API_BASE_URL=http://localhost:8000
 uv run streamlit run src/client/app/streamlit_app.py
 ```
 
-### Запуск через `pip`
+Веб-интерфейс будет доступен на `http://localhost:8501`.
 
-`pyproject.toml` источник зависимостей При желании можно установить проект напрямую:
+### 4. Telegram-слой локально
+
+В этом репозитории Telegram-часть пока представлена сервисным слоем и обработчиками (`src/bot/service.py`, `src/bot/handlers/common.py`), которые:
+
+- вызывают `/ask`
+- сохраняют историю запросов в БД
+- форматируют ответ и краткий список источников
+- режут длинные сообщения под лимит Telegram
+
+Для локальной проверки bot-а:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
-pip install .
+source .venv/bin/activate
 export PYTHONPATH=.
+export DATABASE_URL=sqlite+aiosqlite:///./bot.db
+uv run pytest tests/test_bot_service.py tests/test_bot_handlers_common.py -q
 ```
 
-start up server
+Отдельный polling/webhook runner Telegram-бота и отдельный `bot`-сервис в `docker-compose.yaml` в текущем срезе репозитория отсутствуют.
 
-```bash
-uvicorn src.server.app.main:app --reload
+## Запуск через Docker Compose
+
+`docker-compose.yaml` поднимает:
+
+- `server` на `http://localhost:8000`
+- `client` на `http://localhost:8501`
+
+Перед запуском создайте `.env` рядом с `docker-compose.yaml`, например:
+
+```env
+OLLAMA_HOST=http://host.docker.internal:11434
+API_BASE_URL=http://server:8000
+DATABASE_URL=sqlite+aiosqlite:///./bot.db
 ```
 
-client
-
-```bash
-streamlit run src/client/app/streamlit_app.py
-```
-
-## Docker
-
-Для сборки и запуска в Docker используется тот же `pyproject.toml`, зависимости устанавливаются через `uv`.
-
-В контейнере путь к базе векторного индекса настраивается переменной окружения `VECTOR_DB_DIR` и по умолчанию настроен в `docker-compose.yaml` на `/app/chrome_langchain_db`, примонтированный как volume.
+Затем выполните:
 
 ```bash
 docker compose --profile dev up --build
 ```
 
-## Contribute with uv
+По умолчанию в compose:
+
+- векторная БД хранится в volume `app-data`
+- `OLLAMA_HOST` указывает на Ollama на хост-машине
+- tg_bot пока не выделен в отдельный контейнер
+
+## Тесты и проверка
 
 ```bash
-uv run pre-commit install
-```
-
-before PR
-
-```bash
-uv run ruff check --fix .
-uv run black .
-uv run isort .
 uv run pytest -q
-uv run pre-commit run --all-files
+uv run ruff check .
+uv run black --check .
+uv run isort --check-only .
 ```
 
-For a better contributing experience here is a ready script.
+Полный локальный прогон:
 
 ```bash
 ./uv-linters.sh
 ```
+
+## Документация
+
+- ТЗ: [`docs/technical-specification-for-IAfEI/ТЗ-общее/ТЗ-общее.pdf`](docs/technical-specification-for-IAfEI/ТЗ-общее/ТЗ-общее.pdf)
+
+- Референс по структуре ТЗ: [`docs/technical-specification-for-IAfEI/README.md`](docs/technical-specification-for-IAfEI/README.md)
