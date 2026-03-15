@@ -12,6 +12,7 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi==0.124.4",
     "starlette==0.50.0",
+    "httpx==0.27.2",
     "uvicorn==0.30.5",
     "pydantic",
     "sqlalchemy",
@@ -43,7 +44,6 @@ dependencies = [
 [dependency-groups]
 dev = [
     "black==25.12.0",
-    "httpx==0.27.2",
     "isort==5.13.2",
     "pre-commit==4.5.0",
     "pytest==9.0.2",

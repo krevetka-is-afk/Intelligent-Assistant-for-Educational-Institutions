@@ -44,7 +44,7 @@ def get_response(promt: str):
         response.raise_for_status()
 
         payload = response.json()
-        return payload.get("response", "Empty response")
+        return payload.get("answer", "Empty response")
 
     except requests.exceptions.ConnectionError:
         logger.error("Cannot connect to server at %s", API_URL)
