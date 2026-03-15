@@ -16,6 +16,9 @@ dependencies = [
     "pydantic",
     "sqlalchemy",
     "sqlmodel~=0.0.27",
+    "asyncpg",
+    "aiosqlite",
+    "greenlet",
     "python-jose",
     "passlib",
     "bcrypt==5.0.0",
@@ -55,7 +58,7 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["server*", "client*"]
+include = ["server*", "client*", "bot*"]
 exclude = ["tests*", "docs*", "reports*", "EVIDENCE*", "security*", "htmlcov*"]
 
 [tool.setuptools.package-data]
