@@ -25,7 +25,11 @@ def _load_documents() -> tuple[list[Document], list[str]]:
     for i, row in df.iterrows():
         document = Document(
             page_content=row["Title"] + " " + row["Description"],
-            metadata={"Class Index": row["Class Index"]},
+            metadata={
+                "title": row["Title"],
+                "source": DATA_PATH.name,
+                "Class Index": row["Class Index"],
+            },
             id=str(i),
         )
         ids.append(str(i))

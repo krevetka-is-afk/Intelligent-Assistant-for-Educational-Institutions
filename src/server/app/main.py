@@ -2,6 +2,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -53,6 +54,45 @@ template = config.template
 
 prompt = ChatPromptTemplate.from_template(template)
 chain = prompt | model
+_ALLOWED_METADATA_KEYS = {"source", "title", "page", "Class Index"}
+
+
+def _normalize_metadata_value(value: Any) -> Any:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return value
+
+
+def _normalize_source_metadata(raw_metadata: Any) -> dict[str, Any]:
+    if not isinstance(raw_metadata, dict):
+        return {}
+
+    source = _normalize_metadata_value(raw_metadata.get("source"))
+    title = _normalize_metadata_value(raw_metadata.get("title"))
+    page = _normalize_metadata_value(raw_metadata.get("page"))
+    class_index = _normalize_metadata_value(raw_metadata.get("Class Index"))
+
+    normalized = {
+        key: _normalize_metadata_value(value)
+        for key, value in raw_metadata.items()
+        if key in _ALLOWED_METADATA_KEYS and _normalize_metadata_value(value) is not None
+    }
+
+    resolved_title = title or source
+    if resolved_title is None and class_index is not None:
+        resolved_title = f"Class {class_index}"
+
+    if resolved_title is not None:
+        normalized["title"] = resolved_title
+    if page is not None:
+        normalized["page"] = page
+    if source is not None:
+        normalized["source"] = source
+    if class_index is not None:
+        normalized["Class Index"] = class_index
+
+    return normalized
 
 
 def _error_response(message: str, status_code: int) -> JSONResponse:
@@ -118,11 +158,10 @@ async def ask(request: Request):
         logger.exception("LLM chain failed in /ask")
         return _error_response("Failed to generate a response. Please try again later.", 500)
 
-    _ALLOWED_METADATA_KEYS = {"source", "title", "page", "Class Index"}
     sources = [
         {
             "content": doc.page_content,
-            "metadata": {k: v for k, v in doc.metadata.items() if k in _ALLOWED_METADATA_KEYS},
+            "metadata": _normalize_source_metadata(doc.metadata),
         }
         for doc in documents
     ]
