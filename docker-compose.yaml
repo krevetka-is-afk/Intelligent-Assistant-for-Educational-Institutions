@@ -1,21 +1,21 @@
 # version: "3.9"
 
 services:
-  # db:
-  #   image: postgres:16-alpine
-  #   environment:
-  #     POSTGRES_DB: db_name
-  #     POSTGRES_USER: db_user
-  #     POSTGRES_PASSWORD: db_pass
-  #   profiles: ["dev"]
-  #   volumes:
-  #     - pg-data:/var/lib/postgresql/data
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "pg_isready -U db_user -d db_name"]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 5
-  #   restart: unless-stopped
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    profiles: ["dev"]
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   server:
     build:
@@ -30,7 +30,7 @@ services:
       PYTHONUNBUFFERED: "1"
       VECTOR_DB_DIR: /data
       OLLAMA_HOST: http://host.docker.internal:11434  # Connect to host's Ollama
-      # DATABASE_URL: postgresql+psycopg2://db_user:db_pass@db:5432/db_name
+
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -57,6 +57,24 @@ services:
       retries: 3
     profiles: ["dev"]
 
+  bot:
+    build:
+      context: .
+      dockerfile: src/bot/Dockerfile
+    env_file:
+      - .env
+    environment:
+      BOT_TOKEN: "${BOT_TOKEN}"
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
+      RAG_API_URL: "http://server:8000/ask"
+    depends_on:
+      server:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["dev"]
+
   client:
     build:
       context: .
@@ -80,5 +98,5 @@ services:
 volumes:
   app-data:
     driver: local
-  # pg-data:
-  #   driver: local
+  pg-data:
+    driver: local
