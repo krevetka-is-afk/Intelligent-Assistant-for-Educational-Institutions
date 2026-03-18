@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export PYTHONPATH=.
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$repo_root"
+
+export PYTHONPATH="$repo_root"
 
 # Root env is used only for shared linters/checkers.
 uv sync --group dev --frozen
