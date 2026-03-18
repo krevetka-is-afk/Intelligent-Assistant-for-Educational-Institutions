@@ -416,8 +416,10 @@
                 return;
             }
 
+            const answer = data.answer || "";
+
             // Display answer
-            answerText.textContent = data.response;
+            answerText.textContent = answer;
 
             // Metadata
             const meta = data.metadata || {};
@@ -448,7 +450,7 @@
             answerSection.classList.add("visible");
 
             // Add to history
-            history.unshift({ question, answer: data.response });
+            history.unshift({ question, answer });
             renderHistory();
 
         } catch (err) {

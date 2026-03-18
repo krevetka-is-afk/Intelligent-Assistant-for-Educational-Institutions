@@ -1130,6 +1130,7 @@ dependencies = [
     { name = "click" },
     { name = "fastapi" },
     { name = "greenlet" },
+    { name = "httpx" },
     { name = "jinja2" },
     { name = "langchain" },
     { name = "langchain-chroma" },
@@ -1159,7 +1160,6 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "black" },
-    { name = "httpx" },
     { name = "isort" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -1175,6 +1175,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.1.7,<9" },
     { name = "fastapi", specifier = "==0.124.4" },
     { name = "greenlet" },
+    { name = "httpx", specifier = "==0.27.2" },
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "langchain", specifier = ">=1.2.6" },
     { name = "langchain-chroma", specifier = ">=1.1.0" },
@@ -1205,7 +1206,6 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "black", specifier = "==25.12.0" },
-    { name = "httpx", specifier = "==0.27.2" },
     { name = "isort", specifier = "==5.13.2" },
     { name = "pre-commit", specifier = "==4.5.0" },
     { name = "pytest", specifier = "==9.0.2" },
