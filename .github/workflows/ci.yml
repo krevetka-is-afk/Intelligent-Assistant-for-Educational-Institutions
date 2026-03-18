@@ -93,7 +93,9 @@ jobs:
       - name: Pre-commit (all files)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         env:
-          SKIP: no-commit-to-branch
+          # gitleaks already runs in the dedicated security-check job.
+          # Skipping it here avoids flaky Go module downloads during pre-commit env bootstrap.
+          SKIP: no-commit-to-branch,gitleaks
         run: uv run pre-commit run --all-files
 
   security-check:
