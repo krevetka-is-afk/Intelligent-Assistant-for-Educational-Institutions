@@ -168,3 +168,47 @@ def test_process_text_question_handles_api_unavailable(monkeypatch, tmp_path, ca
         asyncio.run(database.engine.dispose())
 
     assert "API unavailable while processing question" in caplog.text
+
+
+def test_process_question_saves_image_content_type(monkeypatch, tmp_path):
+    database, _, api_client, service, models = _load_bot_modules(monkeypatch, tmp_path)
+
+    class _FakeAPIClient:
+        async def ask(self, question: str):
+            assert question == "Извлеченный текст"
+            return api_client.AskResult(
+                answer="Ответ по фото.",
+                sources=[api_client.AskSource(content="Doc", metadata={"page": 1})],
+            )
+
+    async def scenario():
+        await database.init_db()
+        sent_messages: list[str] = []
+
+        async def send_reply(text: str) -> None:
+            sent_messages.append(text)
+
+        reply = await service.process_question(
+            telegram_id=404,
+            username="student",
+            question="Извлеченный текст",
+            raw_content="Сырой OCR текст",
+            content_type="image",
+            send_reply=send_reply,
+            api_client=_FakeAPIClient(),
+        )
+
+        async with database.async_session_factory() as session:
+            stored_request = await session.scalar(select(models.Request))
+
+        assert reply.message == "Ответ по фото."
+        assert len(reply.sources) == 1
+        assert sent_messages == ["Ответ по фото."]
+        assert stored_request is not None
+        assert stored_request.content_type == "image"
+        assert stored_request.raw_content == "Сырой OCR текст"
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
