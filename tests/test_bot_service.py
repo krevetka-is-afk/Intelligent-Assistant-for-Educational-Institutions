@@ -58,7 +58,12 @@ def test_process_text_question_saves_history_and_sends_reply(monkeypatch, tmp_pa
             assert question == "Когда дедлайн?"
             return api_client.AskResult(
                 answer="Дедлайн указан в LMS.",
-                sources=[api_client.AskSource(content="LMS", metadata={"source": "portal"})],
+                sources=[
+                    api_client.AskSource(
+                        content="LMS",
+                        metadata={"title": "Портал LMS", "page": 3, "source": "portal"},
+                    )
+                ],
             )
 
     async def scenario():
@@ -79,12 +84,13 @@ def test_process_text_question_saves_history_and_sends_reply(monkeypatch, tmp_pa
         async with database.async_session_factory() as session:
             stored_request = await session.scalar(select(models.Request))
 
-        assert reply.message == "Дедлайн указан в LMS."
+        expected_message = "Дедлайн указан в LMS.\n\nИсточники:\n1. Портал LMS, стр. 3"
+        assert reply.message == expected_message
         assert len(reply.sources) == 1
-        assert sent_messages == ["Дедлайн указан в LMS."]
+        assert sent_messages == [expected_message]
         assert stored_request is not None
         assert stored_request.raw_content == "Когда дедлайн?"
-        assert stored_request.ai_response == "Дедлайн указан в LMS."
+        assert stored_request.ai_response == expected_message
 
     try:
         asyncio.run(scenario())
@@ -178,7 +184,12 @@ def test_process_question_saves_image_content_type(monkeypatch, tmp_path):
             assert question == "Извлеченный текст"
             return api_client.AskResult(
                 answer="Ответ по фото.",
-                sources=[api_client.AskSource(content="Doc", metadata={"page": 1})],
+                sources=[
+                    api_client.AskSource(
+                        content="Doc",
+                        metadata={"title": "Учебный регламент", "page": 1},
+                    )
+                ],
             )
 
     async def scenario():
@@ -201,14 +212,46 @@ def test_process_question_saves_image_content_type(monkeypatch, tmp_path):
         async with database.async_session_factory() as session:
             stored_request = await session.scalar(select(models.Request))
 
-        assert reply.message == "Ответ по фото."
+        expected_message = "Ответ по фото.\n\nИсточники:\n1. Учебный регламент, стр. 1"
+        assert reply.message == expected_message
         assert len(reply.sources) == 1
-        assert sent_messages == ["Ответ по фото."]
+        assert sent_messages == [expected_message]
         assert stored_request is not None
         assert stored_request.content_type == "image"
         assert stored_request.raw_content == "Сырой OCR текст"
+        assert stored_request.ai_response == expected_message
 
     try:
         asyncio.run(scenario())
     finally:
         asyncio.run(database.engine.dispose())
+
+
+def test_split_reply_text_breaks_long_messages(monkeypatch, tmp_path):
+    database, _, _, service, _ = _load_bot_modules(monkeypatch, tmp_path)
+
+    long_text = ("Очень длинный ответ " * 400).strip()
+
+    chunks = service._split_reply_text(long_text, max_length=250)
+
+    assert len(chunks) > 1
+    assert all(len(chunk) <= 250 for chunk in chunks)
+    assert chunks[0].startswith("Очень длинный ответ")
+    assert chunks[-1].endswith("ответ")
+
+    asyncio.run(database.engine.dispose())
+
+
+def test_format_sources_list_deduplicates_title_and_page(monkeypatch, tmp_path):
+    database, _, api_client, service, _ = _load_bot_modules(monkeypatch, tmp_path)
+
+    duplicated_sources = [
+        api_client.AskSource(content="Doc 1", metadata={"title": "Положение", "page": 5}),
+        api_client.AskSource(content="Doc 2", metadata={"title": "Положение", "page": 5}),
+        api_client.AskSource(content="Doc 3", metadata={"title": "Справка", "page": 8}),
+    ]
+
+    sources_block = service._format_sources_list(duplicated_sources)
+
+    assert sources_block == "Источники:\n1. Положение, стр. 5\n2. Справка, стр. 8"
+    asyncio.run(database.engine.dispose())

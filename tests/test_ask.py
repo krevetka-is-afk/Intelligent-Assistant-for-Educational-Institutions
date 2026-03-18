@@ -30,7 +30,7 @@ def test_ask_returns_compatible_contract(client, monkeypatch):
         "sources": [
             {
                 "content": "Расписание пересдач опубликовано на портале.",
-                "metadata": {"source": "faq", "page": 2},
+                "metadata": {"title": "faq", "source": "faq", "page": 2},
             }
         ],
         "metadata": {
