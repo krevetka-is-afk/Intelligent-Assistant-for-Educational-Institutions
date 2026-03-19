@@ -1,3 +1,4 @@
+import html
 import logging
 
 import aiohttp
@@ -16,6 +17,7 @@ router = Router()
 
 TELEGRAM_LIMIT = 4096
 MAX_PDF_SIZE = 20 * 1024 * 1024  # 20 MB
+RAG_API_TIMEOUT_SECONDS = 15
 
 
 class QuestionStates(StatesGroup):
@@ -88,6 +90,11 @@ def format_answer(response: str, sources: list) -> list[str]:
     return parts
 
 
+def build_confirmation_preview(title: str, extracted_text: str) -> str:
+    preview = extracted_text[:1000] + ("..." if len(extracted_text) > 1000 else "")
+    return f"📄 <b>{title}</b>\n\n{html.escape(preview, quote=False)}\n\nВсё верно?"
+
+
 async def call_ask_api(question: str) -> tuple[str, list]:
     if not config.RAG_API_URL:
         return "RAG_API_URL не задан в конфигурации.", []
@@ -96,9 +103,16 @@ async def call_ask_api(question: str) -> tuple[str, list]:
             async with session.post(
                 config.RAG_API_URL,
                 json={"question": question},
-                timeout=aiohttp.ClientTimeout(total=60),
+                timeout=aiohttp.ClientTimeout(total=RAG_API_TIMEOUT_SECONDS),
             ) as resp:
                 data = await resp.json()
+        if not isinstance(data, dict):
+            return "Сервер вернул некорректный ответ.", []
+
+        error_message = data.get("error")
+        if isinstance(error_message, str) and error_message.strip():
+            return f"Ошибка сервера: {error_message.strip()}", data.get("sources", [])
+
         return data.get("response", "Нет ответа от сервера."), data.get("sources", [])
     except Exception as e:
         logger.error("Error calling RAG API: %s", e)
@@ -217,9 +231,8 @@ async def handle_photo(message: types.Message, state: FSMContext) -> None:
     await state.update_data(pending_question=ocr_text, content_type="image")
     await state.set_state(QuestionStates.awaiting_confirmation)
 
-    preview = ocr_text[:1000] + ("..." if len(ocr_text) > 1000 else "")
     await message.answer(
-        f"📄 <b>Распознанный текст:</b>\n\n{preview}\n\nВсё верно?",
+        build_confirmation_preview("Распознанный текст:", ocr_text),
         parse_mode="HTML",
         reply_markup=confirm_keyboard(),
     )
@@ -248,9 +261,8 @@ async def handle_document(message: types.Message, state: FSMContext) -> None:
     await state.update_data(pending_question=pdf_text, content_type="pdf")
     await state.set_state(QuestionStates.awaiting_confirmation)
 
-    preview = pdf_text[:1000] + ("..." if len(pdf_text) > 1000 else "")
     await message.answer(
-        f"📄 <b>Извлечённый текст из PDF:</b>\n\n{preview}\n\nВсё верно?",
+        build_confirmation_preview("Извлечённый текст из PDF:", pdf_text),
         parse_mode="HTML",
         reply_markup=confirm_keyboard(),
     )
