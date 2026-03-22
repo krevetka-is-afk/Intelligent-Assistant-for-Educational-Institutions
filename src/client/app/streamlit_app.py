@@ -18,7 +18,7 @@ if not logger.hasHandlers:
 logger.propagate = False
 
 
-st.title("ask about study process")
+st.title("Помощник по учебному процессу ВШЭ")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -26,52 +26,56 @@ if "messages" not in st.session_state:
 for message in st.session_state.messages:
     st.chat_message(message["role"]).markdown(message["content"])
 
-promt = st.chat_input("pass your question here")
+promt = st.chat_input("Задайте вопрос об учебном процессе...")
 
 
 def get_response(promt: str):
     logger.info("Sending request to server")
 
-    question = promt
-
     try:
         response = requests.post(
             url=API_URL,
-            json={"question": question},
-            timeout=10,
+            json={"question": promt},
+            timeout=90,
         )
         logger.debug("Server responded with status code %s", response.status_code)
         response.raise_for_status()
 
         payload = response.json()
-        return payload.get("response", "Empty response")
+        return payload.get("response", "Пустой ответ от сервера."), payload.get("sources", [])
 
     except requests.exceptions.ConnectionError:
         logger.error("Cannot connect to server at %s", API_URL)
-        return "Cannot connect to the server. Please try again later."
+        return "Не удалось подключиться к серверу. Попробуйте позже.", []
 
     except requests.exceptions.Timeout:
         logger.warning("Request to server timed out")
-        return "Server is taking too long to respond."
+        return "Сервер не ответил вовремя. Попробуйте позже.", []
 
     except requests.exceptions.HTTPError as e:
-        logger.error(
-            "Server returned HTTP %s: %s",
-            e.response.status_code,
-            e.response.text,
-        )
-        return "Server returned an error."
+        logger.error("Server returned HTTP %s: %s", e.response.status_code, e.response.text)
+        return "Сервер вернул ошибку.", []
 
     except requests.exceptions.RequestException:
         logger.exception("HTTP request to server failed")
-        return "Server is unavailable"
+        return "Сервер недоступен.", []
 
-    except ValueError:
-        logger.exception("Failed to decode JSON response")
-
-    except Exception:
+    except (ValueError, Exception):
         logger.exception("Unexpected client error")
-        return "Unexpected error occurred."
+        return "Произошла непредвиденная ошибка.", []
+
+
+def format_sources(sources: list) -> str:
+    if not sources:
+        return ""
+    lines = ["\n\n---\n📚 **Источники:**"]
+    for s in sources:
+        meta = s.get("metadata", {})
+        title = meta.get("title") or meta.get("source", "Неизвестный источник")
+        page = meta.get("page")
+        line = f"- {title}" + (f", стр. {page}" if page else "")
+        lines.append(line)
+    return "\n".join(lines)
 
 
 if promt:
@@ -79,6 +83,8 @@ if promt:
     st.chat_message("user").markdown(promt)
     st.session_state.messages.append({"role": "user", "content": promt})
 
-    response = get_response(promt)
-    st.chat_message("assistant").markdown(response)
-    st.session_state.messages.append({"role": "assistant", "content": response})
+    answer, sources = get_response(promt)
+    full_response = answer + format_sources(sources)
+
+    st.chat_message("assistant").markdown(full_response)
+    st.session_state.messages.append({"role": "assistant", "content": full_response})

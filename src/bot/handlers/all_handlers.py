@@ -1,3 +1,4 @@
+import html
 import logging
 
 import aiohttp
@@ -96,7 +97,7 @@ async def call_ask_api(question: str) -> tuple[str, list]:
             async with session.post(
                 config.RAG_API_URL,
                 json={"question": question},
-                timeout=aiohttp.ClientTimeout(total=60),
+                timeout=aiohttp.ClientTimeout(total=90),
             ) as resp:
                 data = await resp.json()
         return data.get("response", "Нет ответа от сервера."), data.get("sources", [])
@@ -217,7 +218,7 @@ async def handle_photo(message: types.Message, state: FSMContext) -> None:
     await state.update_data(pending_question=ocr_text, content_type="image")
     await state.set_state(QuestionStates.awaiting_confirmation)
 
-    preview = ocr_text[:1000] + ("..." if len(ocr_text) > 1000 else "")
+    preview = html.escape(ocr_text[:1000] + ("..." if len(ocr_text) > 1000 else ""))
     await message.answer(
         f"📄 <b>Распознанный текст:</b>\n\n{preview}\n\nВсё верно?",
         parse_mode="HTML",
@@ -248,7 +249,7 @@ async def handle_document(message: types.Message, state: FSMContext) -> None:
     await state.update_data(pending_question=pdf_text, content_type="pdf")
     await state.set_state(QuestionStates.awaiting_confirmation)
 
-    preview = pdf_text[:1000] + ("..." if len(pdf_text) > 1000 else "")
+    preview = html.escape(pdf_text[:1000] + ("..." if len(pdf_text) > 1000 else ""))
     await message.answer(
         f"📄 <b>Извлечённый текст из PDF:</b>\n\n{preview}\n\nВсё верно?",
         parse_mode="HTML",

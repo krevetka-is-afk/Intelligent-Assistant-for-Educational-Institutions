@@ -26,8 +26,8 @@ async def create_query(
         query = Query(
             user_id=user_id,
             content_type=content_type,
-            question=question,
-            answer=answer,
+            question=question[:4000],
+            answer=(answer or "")[:8000],
         )
         session.add(query)
         await session.commit()
