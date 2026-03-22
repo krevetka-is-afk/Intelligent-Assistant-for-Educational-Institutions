@@ -37,9 +37,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 
 ############################
-# Runtime stage: server
+# Runtime base stage
 ############################
-FROM python:3.12-slim AS server
+FROM python:3.12-slim AS runtime-base
 
 ARG APP_UID=1000
 ARG APP_GID=1000
@@ -50,6 +50,9 @@ ENV PATH=/app/bin:$PATH \
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-rus \
  && rm -rf /var/lib/apt/lists/*
 
 RUN addgroup --gid ${APP_GID} appgroup && \
@@ -57,6 +60,11 @@ RUN addgroup --gid ${APP_GID} appgroup && \
       --uid ${APP_UID} \
       --gid ${APP_GID} \
       --home /app appuser
+
+############################
+# Runtime stage: server
+############################
+FROM runtime-base AS server
 
 COPY --from=build --chown=appuser:appgroup /app /app
 COPY --from=build --chown=appuser:appgroup /_project/src/server /server
@@ -72,21 +80,12 @@ CMD ["/app/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "-
 ############################
 # Runtime stage: client
 ############################
-FROM python:3.12-slim AS client
-
-ARG APP_UID=1000
-ARG APP_GID=1000
+FROM runtime-base AS client
 
 ENV PATH=/app/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     STREAMLIT_SERVER_PORT=8501 \
     STREAMLIT_SERVER_ADDRESS=0.0.0.0
-
-RUN addgroup --gid ${APP_GID} appgroup && \
-    adduser --disabled-password --gecos '' \
-      --uid ${APP_UID} \
-      --gid ${APP_GID} \
-      --home /app appuser
 
 COPY --from=build --chown=appuser:appgroup /app /app
 COPY --from=build --chown=appuser:appgroup /_project/src/client /client

@@ -42,7 +42,7 @@ def get_response(promt: str):
         response.raise_for_status()
 
         payload = response.json()
-        return payload.get("response", "Пустой ответ от сервера."), payload.get("sources", [])
+        return payload.get("answer", "Пустой ответ от сервера."), payload.get("sources", [])
 
     except requests.exceptions.ConnectionError:
         logger.error("Cannot connect to server at %s", API_URL)

@@ -8,7 +8,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from core.crud import create_query, get_or_create_user
+from core.crud import create_request, get_or_create_user
 from handlers.common import read_image, read_PDF
 
 logger = logging.getLogger(__name__)
@@ -17,6 +17,7 @@ router = Router()
 
 TELEGRAM_LIMIT = 4096
 MAX_PDF_SIZE = 20 * 1024 * 1024  # 20 MB
+RAG_API_TIMEOUT_SECONDS = 15
 
 
 class QuestionStates(StatesGroup):
@@ -89,6 +90,11 @@ def format_answer(response: str, sources: list) -> list[str]:
     return parts
 
 
+def build_confirmation_preview(title: str, extracted_text: str) -> str:
+    preview = extracted_text[:1000] + ("..." if len(extracted_text) > 1000 else "")
+    return f"📄 <b>{title}</b>\n\n{html.escape(preview, quote=False)}\n\nВсё верно?"
+
+
 async def call_ask_api(question: str) -> tuple[str, list]:
     if not config.RAG_API_URL:
         return "RAG_API_URL не задан в конфигурации.", []
@@ -100,7 +106,14 @@ async def call_ask_api(question: str) -> tuple[str, list]:
                 timeout=aiohttp.ClientTimeout(total=90),
             ) as resp:
                 data = await resp.json()
-        return data.get("response", "Нет ответа от сервера."), data.get("sources", [])
+        if not isinstance(data, dict):
+            return "Сервер вернул некорректный ответ.", []
+
+        error_message = data.get("error")
+        if isinstance(error_message, str) and error_message.strip():
+            return f"Ошибка сервера: {error_message.strip()}", data.get("sources", [])
+
+        return data.get("answer", "Нет ответа от сервера."), data.get("sources", [])
     except Exception as e:
         logger.error("Error calling RAG API: %s", e)
         return "Сервер недоступен. Попробуйте позже.", []
@@ -117,8 +130,8 @@ async def send_answer(
     for part in parts:
         await message.answer(part, parse_mode="HTML", reply_markup=back_keyboard())
 
-    await create_query(
-        user_id=user_id, content_type=content_type, question=question, answer=response
+    await create_request(
+        user_id=user_id, content_type=content_type, raw_content=question, ai_response=response
     )
 
 
@@ -218,9 +231,8 @@ async def handle_photo(message: types.Message, state: FSMContext) -> None:
     await state.update_data(pending_question=ocr_text, content_type="image")
     await state.set_state(QuestionStates.awaiting_confirmation)
 
-    preview = html.escape(ocr_text[:1000] + ("..." if len(ocr_text) > 1000 else ""))
     await message.answer(
-        f"📄 <b>Распознанный текст:</b>\n\n{preview}\n\nВсё верно?",
+        build_confirmation_preview("Распознанный текст:", ocr_text),
         parse_mode="HTML",
         reply_markup=confirm_keyboard(),
     )
@@ -249,9 +261,8 @@ async def handle_document(message: types.Message, state: FSMContext) -> None:
     await state.update_data(pending_question=pdf_text, content_type="pdf")
     await state.set_state(QuestionStates.awaiting_confirmation)
 
-    preview = html.escape(pdf_text[:1000] + ("..." if len(pdf_text) > 1000 else ""))
     await message.answer(
-        f"📄 <b>Извлечённый текст из PDF:</b>\n\n{preview}\n\nВсё верно?",
+        build_confirmation_preview("Извлечённый текст из PDF:", pdf_text),
         parse_mode="HTML",
         reply_markup=confirm_keyboard(),
     )
