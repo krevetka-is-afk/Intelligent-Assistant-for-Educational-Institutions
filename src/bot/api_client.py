@@ -17,7 +17,7 @@ if not logger.handlers:
 logger.propagate = False
 
 DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
-DEFAULT_TIMEOUT_SECONDS = 15.0
+DEFAULT_TIMEOUT_SECONDS = 25.0
 
 
 @dataclass(slots=True)
@@ -30,6 +30,7 @@ class AskSource:
 class AskResult:
     answer: str
     sources: list[AskSource]
+    metadata: dict[str, Any]
 
 
 class AskAPIError(Exception):
@@ -141,4 +142,8 @@ class AskAPIClient:
                 )
             )
 
-        return AskResult(answer=answer.strip(), sources=sources)
+        metadata = payload.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        return AskResult(answer=answer.strip(), sources=sources, metadata=metadata)

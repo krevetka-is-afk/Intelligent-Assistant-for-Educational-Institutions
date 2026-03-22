@@ -40,6 +40,8 @@ dependencies = [
     "protobuf>=6.33.5",
     "langchain-core>=1.2.11",
     "pypdf>=6.8.0",
+    "prometheus-client>=0.23.1",
+    "sentence-transformers>=5.1.2",
 ]
 
 [dependency-groups]
@@ -81,6 +83,7 @@ profile = "black"
 line_length = 100
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 filterwarnings = [
     "ignore:.*import python_multipart.*:PendingDeprecationWarning",
 ]

@@ -427,8 +427,20 @@
             if (meta.model) {
                 metaBar.innerHTML += `<span>Model: ${escapeHtml(meta.model)}</span>`;
             }
+            if (meta.embedding_model) {
+                metaBar.innerHTML += `<span>Embeddings: ${escapeHtml(meta.embedding_model)}</span>`;
+            }
             if (meta.num_sources !== undefined) {
                 metaBar.innerHTML += `<span>Sources used: ${meta.num_sources}</span>`;
+            }
+            if (meta.confidence !== undefined) {
+                metaBar.innerHTML += `<span>Confidence: ${Number(meta.confidence).toFixed(2)}</span>`;
+            }
+            if (meta.fallback_used) {
+                metaBar.innerHTML += `<span>Fallback: ${escapeHtml(meta.fallback_reason || "yes")}</span>`;
+            }
+            if (meta.total_time_ms !== undefined) {
+                metaBar.innerHTML += `<span>Total: ${meta.total_time_ms} ms</span>`;
             }
 
             // Sources

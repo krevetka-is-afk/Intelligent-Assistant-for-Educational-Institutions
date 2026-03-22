@@ -28,6 +28,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # COPY src/server /server
 # COPY src/client /client
 COPY ./src ./src
+COPY ./data_and_documents ./data_and_documents
 
 COPY VERSION ./
 
@@ -68,6 +69,7 @@ FROM runtime-base AS server
 
 COPY --from=build --chown=appuser:appgroup /app /app
 COPY --from=build --chown=appuser:appgroup /_project/src/server /server
+COPY --from=build --chown=appuser:appgroup /_project/data_and_documents /data_and_documents
 RUN chmod -R a+rX /app /server
 
 WORKDIR /server

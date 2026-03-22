@@ -29,6 +29,7 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       VECTOR_DB_DIR: /data
+      DOCUMENTS_DIR: /data_and_documents
       OLLAMA_HOST: http://host.docker.internal:11434  # Connect to host's Ollama
 
     extra_hosts:
