@@ -144,7 +144,9 @@ async def ask(request: Request):
     try:
         documents = get_retriever().invoke(question)
         t_retriever = time.perf_counter()
-        logger.debug("Retriever returned %d documents (%.2fs)", len(documents), t_retriever - t_start)
+        logger.debug(
+            "Retriever returned %d documents (%.2fs)", len(documents), t_retriever - t_start
+        )
     except ConnectionError:
         logger.error("Could not connect to vector store")
         return _error_response("Vector store is unavailable. Please try again later.", 503)
