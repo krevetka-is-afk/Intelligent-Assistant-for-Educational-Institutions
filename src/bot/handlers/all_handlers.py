@@ -113,6 +113,10 @@ async def call_ask_api(question: str) -> tuple[str, list]:
         if isinstance(error_message, str) and error_message.strip():
             return f"Ошибка сервера: {error_message.strip()}", data.get("sources", [])
 
+        answer = data.get("answer")
+        if isinstance(answer, str) and answer.strip():
+            return answer, data.get("sources", [])
+
         return data.get("response", "Нет ответа от сервера."), data.get("sources", [])
     except Exception as e:
         logger.error("Error calling RAG API: %s", e)

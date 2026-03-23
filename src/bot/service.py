@@ -40,6 +40,7 @@ SUPPORTED_CONTENT_TYPES = frozenset({"text", "image", "pdf"})
 class BotReply:
     message: str
     sources: list[AskSource]
+    metadata: dict[str, Any]
     request_id: int
 
 
@@ -94,12 +95,29 @@ def _format_sources_list(sources: list[AskSource]) -> str:
     return "Источники:\n" + "\n".join(unique_sources)
 
 
-def _build_reply_text(answer: str, sources: list[AskSource]) -> str:
+def _format_answer_metadata(metadata: dict[str, Any]) -> str:
+    lines: list[str] = []
+
+    confidence = metadata.get("confidence")
+    if isinstance(confidence, (int, float)):
+        lines.append(f"Уверенность: {float(confidence):.2f}")
+
+    if metadata.get("fallback_used"):
+        lines.append("Режим ответа: fallback по найденным документам.")
+
+    return "\n".join(lines)
+
+
+def _build_reply_text(answer: str, sources: list[AskSource], metadata: dict[str, Any]) -> str:
     normalized_answer = answer.strip()
+    metadata_block = _format_answer_metadata(metadata)
     sources_block = _format_sources_list(sources)
-    if not sources_block:
-        return normalized_answer
-    return f"{normalized_answer}\n\n{sources_block}"
+    blocks = [normalized_answer]
+    if metadata_block:
+        blocks.append(metadata_block)
+    if sources_block:
+        blocks.append(sources_block)
+    return "\n\n".join(blocks)
 
 
 def _split_reply_text(text: str, *, max_length: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
@@ -159,11 +177,13 @@ async def process_question(
 
     reply_text: str
     sources: list[AskSource] = []
+    metadata: dict[str, Any] = {}
 
     try:
         result = await client.ask(normalized_question)
-        reply_text = _build_reply_text(result.answer, result.sources)
+        reply_text = _build_reply_text(result.answer, result.sources, result.metadata)
         sources = result.sources
+        metadata = result.metadata
     except AskAPITimeoutError:
         logger.warning(
             "Timed out while processing question for telegram_id=%s after %.1f seconds",
@@ -171,15 +191,18 @@ async def process_question(
             DEFAULT_TIMEOUT_SECONDS,
         )
         reply_text = TIMEOUT_REPLY_TEXT
+        metadata = {}
     except AskAPIUnavailableError:
         logger.exception(
             "API unavailable while processing question for telegram_id=%s",
             telegram_id,
         )
         reply_text = UNAVAILABLE_REPLY_TEXT
+        metadata = {}
     except AskAPIResponseError:
         logger.exception("API returned invalid payload for telegram_id=%s", telegram_id)
         reply_text = INVALID_RESPONSE_REPLY_TEXT
+        metadata = {}
 
     request = await create_request(
         user_id=user.id,
@@ -189,7 +212,7 @@ async def process_question(
     )
     await _send_reply_chunks(send_reply, reply_text)
 
-    return BotReply(message=reply_text, sources=sources, request_id=request.id)
+    return BotReply(message=reply_text, sources=sources, metadata=metadata, request_id=request.id)
 
 
 async def process_text_question(

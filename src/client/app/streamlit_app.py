@@ -24,7 +24,29 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 for message in st.session_state.messages:
-    st.chat_message(message["role"]).markdown(message["content"])
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+        metadata = message.get("metadata", {})
+        if metadata:
+            meta_parts = []
+            if metadata.get("confidence") is not None:
+                meta_parts.append(f"confidence: {float(metadata['confidence']):.2f}")
+            if metadata.get("fallback_used"):
+                meta_parts.append("fallback")
+            if metadata.get("num_sources") is not None:
+                meta_parts.append(f"sources: {metadata['num_sources']}")
+            if meta_parts:
+                st.caption(" | ".join(meta_parts))
+
+        sources = message.get("sources", [])
+        if sources:
+            with st.expander("Sources"):
+                for index, source in enumerate(sources, start=1):
+                    source_title = source.get("metadata", {}).get("title") or source.get(
+                        "metadata", {}
+                    ).get("source", f"Source {index}")
+                    st.markdown(f"**{index}. {source_title}**")
+                    st.write(source.get("content", ""))
 
 promt = st.chat_input("pass your question here")
 
@@ -44,15 +66,19 @@ def get_response(promt: str):
         response.raise_for_status()
 
         payload = response.json()
-        return payload.get("answer", "Empty response")
+        return {
+            "answer": payload.get("answer", "Empty response"),
+            "metadata": payload.get("metadata", {}),
+            "sources": payload.get("sources", []),
+        }
 
     except requests.exceptions.ConnectionError:
         logger.error("Cannot connect to server at %s", API_URL)
-        return "Cannot connect to the server. Please try again later."
+        return {"answer": "Cannot connect to the server. Please try again later."}
 
     except requests.exceptions.Timeout:
         logger.warning("Request to server timed out")
-        return "Server is taking too long to respond."
+        return {"answer": "Server is taking too long to respond."}
 
     except requests.exceptions.HTTPError as e:
         logger.error(
@@ -60,18 +86,18 @@ def get_response(promt: str):
             e.response.status_code,
             e.response.text,
         )
-        return "Server returned an error."
+        return {"answer": "Server returned an error."}
 
     except requests.exceptions.RequestException:
         logger.exception("HTTP request to server failed")
-        return "Server is unavailable"
+        return {"answer": "Server is unavailable"}
 
     except ValueError:
         logger.exception("Failed to decode JSON response")
 
     except Exception:
         logger.exception("Unexpected client error")
-        return "Unexpected error occurred."
+        return {"answer": "Unexpected error occurred."}
 
 
 if promt:
@@ -80,5 +106,33 @@ if promt:
     st.session_state.messages.append({"role": "user", "content": promt})
 
     response = get_response(promt)
-    st.chat_message("assistant").markdown(response)
-    st.session_state.messages.append({"role": "assistant", "content": response})
+    with st.chat_message("assistant"):
+        st.markdown(response["answer"])
+        metadata = response.get("metadata", {})
+        if metadata:
+            meta_parts = []
+            if metadata.get("confidence") is not None:
+                meta_parts.append(f"confidence: {float(metadata['confidence']):.2f}")
+            if metadata.get("fallback_used"):
+                meta_parts.append("fallback")
+            if metadata.get("num_sources") is not None:
+                meta_parts.append(f"sources: {metadata['num_sources']}")
+            if meta_parts:
+                st.caption(" | ".join(meta_parts))
+        sources = response.get("sources", [])
+        if sources:
+            with st.expander("Sources"):
+                for index, source in enumerate(sources, start=1):
+                    source_title = source.get("metadata", {}).get("title") or source.get(
+                        "metadata", {}
+                    ).get("source", f"Source {index}")
+                    st.markdown(f"**{index}. {source_title}**")
+                    st.write(source.get("content", ""))
+    st.session_state.messages.append(
+        {
+            "role": "assistant",
+            "content": response["answer"],
+            "metadata": response.get("metadata", {}),
+            "sources": response.get("sources", []),
+        }
+    )
