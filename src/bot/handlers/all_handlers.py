@@ -103,7 +103,7 @@ async def call_ask_api(question: str) -> tuple[str, list]:
             async with session.post(
                 config.RAG_API_URL,
                 json={"question": question},
-                timeout=aiohttp.ClientTimeout(total=90),
+                timeout=aiohttp.ClientTimeout(total=RAG_API_TIMEOUT_SECONDS),
             ) as resp:
                 data = await resp.json()
         if not isinstance(data, dict):
@@ -113,7 +113,11 @@ async def call_ask_api(question: str) -> tuple[str, list]:
         if isinstance(error_message, str) and error_message.strip():
             return f"Ошибка сервера: {error_message.strip()}", data.get("sources", [])
 
-        return data.get("answer", "Нет ответа от сервера."), data.get("sources", [])
+        answer = data.get("answer")
+        if isinstance(answer, str) and answer.strip():
+            return answer, data.get("sources", [])
+
+        return data.get("response", "Нет ответа от сервера."), data.get("sources", [])
     except Exception as e:
         logger.error("Error calling RAG API: %s", e)
         return "Сервер недоступен. Попробуйте позже.", []

@@ -1,64 +1,87 @@
-import os
+from __future__ import annotations
+
+from dataclasses import dataclass
 from pathlib import Path
 
-import pandas as pd
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
-from langchain_ollama import OllamaEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 
 from . import config
 
-DATA_PATH = Path(__file__).resolve().parent.parent / "data/ag_news.csv"
-_default_db_dir = Path(__file__).resolve().parent.parent / "chrome_langchain_db"
-_raw_db_dir = os.getenv("VECTOR_DB_DIR", str(_default_db_dir))
-db_location = str(Path(_raw_db_dir).resolve())
 
-_retriever: BaseRetriever | None = None
+class VectorStoreUnavailableError(RuntimeError):
+    """Raised when the vector store cannot serve requests."""
 
 
-def _load_documents() -> tuple[list[Document], list[str]]:
-    df = pd.read_csv(DATA_PATH)
-    documents: list[Document] = []
-    ids: list[str] = []
+class EmptyVectorStoreError(VectorStoreUnavailableError):
+    """Raised when the vector store exists but contains no indexed documents."""
 
-    for i, row in df.iterrows():
-        document = Document(
-            page_content=row["Title"] + " " + row["Description"],
-            metadata={
-                "title": row["Title"],
-                "source": DATA_PATH.name,
-                "Class Index": row["Class Index"],
-            },
-            id=str(i),
+
+@dataclass(slots=True)
+class RetrievedDocument:
+    document: Document
+    distance: float
+
+
+_embedding_function: HuggingFaceEmbeddings | None = None
+_vector_store: Chroma | None = None
+
+
+def clear_vector_cache() -> None:
+    global _embedding_function, _vector_store
+    _embedding_function = None
+    _vector_store = None
+
+
+def get_embedding_function() -> HuggingFaceEmbeddings:
+    global _embedding_function
+    if _embedding_function is None:
+        _embedding_function = HuggingFaceEmbeddings(model_name=config.HF_EMBEDDING_MODEL)
+    return _embedding_function
+
+
+def get_vector_store() -> Chroma:
+    global _vector_store
+    if _vector_store is None:
+        config.validate_chunk_settings()
+        _vector_store = Chroma(
+            collection_name=config.CHROMA_COLLECTION_NAME,
+            persist_directory=str(Path(config.VECTOR_DB_DIR)),
+            embedding_function=get_embedding_function(),
         )
-        ids.append(str(i))
-        documents.append(document)
-
-    return documents, ids
+    return _vector_store
 
 
-def _create_retriever() -> BaseRetriever:
-    embeddings = OllamaEmbeddings(model=config.embed_model)
-    add_documents = not os.path.exists(db_location)
+def _ensure_index_ready(vector_store: Chroma) -> None:
+    try:
+        count = vector_store._collection.count()
+    except Exception as exc:
+        raise VectorStoreUnavailableError("Could not access vector store collection") from exc
 
-    vector_store = Chroma(
-        collection_name="news",
-        persist_directory=db_location,
-        embedding_function=embeddings,
-    )
+    if count == 0:
+        raise EmptyVectorStoreError(
+            "Vector index is empty. Run `python -m src.server.app.index_documents --rebuild` first."
+        )
 
-    if add_documents:
-        documents, ids = _load_documents()
-        vector_store.add_documents(documents=documents, ids=ids)
 
-    return vector_store.as_retriever(search_kwargs={"k": 3})
+def similarity_search(question: str, *, k: int | None = None) -> list[RetrievedDocument]:
+    vector_store = get_vector_store()
+    _ensure_index_ready(vector_store)
+    top_k = k or config.RAG_TOP_K
+
+    try:
+        results = vector_store.similarity_search_with_score(question, k=top_k)
+    except Exception as exc:
+        raise VectorStoreUnavailableError("Similarity search failed") from exc
+
+    return [
+        RetrievedDocument(document=document, distance=float(score)) for document, score in results
+    ]
 
 
 def get_retriever() -> BaseRetriever:
-    global _retriever
-
-    if _retriever is None:
-        _retriever = _create_retriever()
-
-    return _retriever
+    vector_store = get_vector_store()
+    _ensure_index_ready(vector_store)
+    return vector_store.as_retriever(search_kwargs={"k": config.RAG_TOP_K})

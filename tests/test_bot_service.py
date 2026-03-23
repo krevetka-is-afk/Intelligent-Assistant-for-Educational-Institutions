@@ -43,6 +43,7 @@ def test_ask_api_client_accepts_answer_only(monkeypatch, tmp_path):
         assert result.answer == "Ответ из API"
         assert result.sources[0].content == "Документ"
         assert result.sources[0].metadata == {"page": 7}
+        assert result.metadata == {}
 
     try:
         asyncio.run(scenario())
@@ -64,6 +65,7 @@ def test_process_text_question_saves_history_and_sends_reply(monkeypatch, tmp_pa
                         metadata={"title": "Портал LMS", "page": 3, "source": "portal"},
                     )
                 ],
+                metadata={"confidence": 0.82, "fallback_used": False},
             )
 
     async def scenario():
@@ -84,9 +86,12 @@ def test_process_text_question_saves_history_and_sends_reply(monkeypatch, tmp_pa
         async with database.async_session_factory() as session:
             stored_request = await session.scalar(select(models.Request))
 
-        expected_message = "Дедлайн указан в LMS.\n\nИсточники:\n1. Портал LMS, стр. 3"
+        expected_message = (
+            "Дедлайн указан в LMS.\n\n" "Уверенность: 0.82\n\n" "Источники:\n1. Портал LMS, стр. 3"
+        )
         assert reply.message == expected_message
         assert len(reply.sources) == 1
+        assert reply.metadata == {"confidence": 0.82, "fallback_used": False}
         assert sent_messages == [expected_message]
         assert stored_request is not None
         assert stored_request.raw_content == "Когда дедлайн?"
@@ -190,6 +195,7 @@ def test_process_question_saves_image_content_type(monkeypatch, tmp_path):
                         metadata={"title": "Учебный регламент", "page": 1},
                     )
                 ],
+                metadata={"confidence": 0.65, "fallback_used": True},
             )
 
     async def scenario():
@@ -212,9 +218,15 @@ def test_process_question_saves_image_content_type(monkeypatch, tmp_path):
         async with database.async_session_factory() as session:
             stored_request = await session.scalar(select(models.Request))
 
-        expected_message = "Ответ по фото.\n\nИсточники:\n1. Учебный регламент, стр. 1"
+        expected_message = (
+            "Ответ по фото.\n\n"
+            "Уверенность: 0.65\n"
+            "Режим ответа: fallback по найденным документам.\n\n"
+            "Источники:\n1. Учебный регламент, стр. 1"
+        )
         assert reply.message == expected_message
         assert len(reply.sources) == 1
+        assert reply.metadata == {"confidence": 0.65, "fallback_used": True}
         assert sent_messages == [expected_message]
         assert stored_request is not None
         assert stored_request.content_type == "image"
