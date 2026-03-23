@@ -66,7 +66,7 @@ def _load_all_handlers_module(monkeypatch):
     async def _get_or_create_user(*args, **kwargs):
         return types.SimpleNamespace(id=1)
 
-    core_crud.create_query = _create_query
+    core_crud.create_request = _create_query
     core_crud.get_or_create_user = _get_or_create_user
     core_package.config = core_config
     core_package.crud = core_crud
