@@ -8,7 +8,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from core.crud import create_query, get_or_create_user
+from core.crud import create_request, get_or_create_user
 from handlers.common import read_image, read_PDF
 
 logger = logging.getLogger(__name__)
@@ -134,8 +134,8 @@ async def send_answer(
     for part in parts:
         await message.answer(part, parse_mode="HTML", reply_markup=back_keyboard())
 
-    await create_query(
-        user_id=user_id, content_type=content_type, question=question, answer=response
+    await create_request(
+        user_id=user_id, content_type=content_type, raw_content=question, ai_response=response
     )
 
 

@@ -60,25 +60,25 @@ def get_response(promt: str):
         response = requests.post(
             url=API_URL,
             json={"question": question},
-            timeout=10,
+            timeout=90,
         )
         logger.debug("Server responded with status code %s", response.status_code)
         response.raise_for_status()
 
         payload = response.json()
         return {
-            "answer": payload.get("answer", "Empty response"),
+            "answer": payload.get("answer", "Пустой ответ от сервера."),
             "metadata": payload.get("metadata", {}),
             "sources": payload.get("sources", []),
         }
 
     except requests.exceptions.ConnectionError:
         logger.error("Cannot connect to server at %s", API_URL)
-        return {"answer": "Cannot connect to the server. Please try again later."}
+        return {"answer": "Не удалось подключиться к серверу. Попробуйте позже."}
 
     except requests.exceptions.Timeout:
         logger.warning("Request to server timed out")
-        return {"answer": "Server is taking too long to respond."}
+        return {"answer": "Сервер не ответил вовремя. Попробуйте позже."}
 
     except requests.exceptions.HTTPError as e:
         logger.error(
@@ -86,11 +86,11 @@ def get_response(promt: str):
             e.response.status_code,
             e.response.text,
         )
-        return {"answer": "Server returned an error."}
+        return {"answer": "Сервер вернул ошибку."}
 
     except requests.exceptions.RequestException:
         logger.exception("HTTP request to server failed")
-        return {"answer": "Server is unavailable"}
+        return {"answer": "Сервер недоступен."}
 
     except ValueError:
         logger.exception("Failed to decode JSON response")

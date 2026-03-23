@@ -49,8 +49,8 @@ async def create_request(
         request = Request(
             user_id=user_id,
             content_type=content_type,
-            raw_content=raw_content,
-            ai_response=ai_response,
+            raw_content=(raw_content or "")[:4000],
+            ai_response=(ai_response or "")[:8000],
         )
         session.add(request)
         await session.commit()
