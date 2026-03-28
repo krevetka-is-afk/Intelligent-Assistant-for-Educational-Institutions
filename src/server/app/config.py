@@ -6,6 +6,8 @@ from pathlib import Path
 from app_runtime import getenv
 
 SERVER_DIR = Path(__file__).resolve().parents[1]
+DOCKER_VECTOR_DB_DIR = Path("/data")
+DOCKER_DOCUMENTS_DIR = Path("/data_and_documents")
 
 
 def _resolve_default_documents_dir() -> Path:
@@ -22,6 +24,32 @@ def _resolve_default_documents_dir() -> Path:
     return (Path.cwd().resolve() / "data_and_documents").resolve()
 
 
+def _is_running_in_container() -> bool:
+    return Path("/.dockerenv").exists()
+
+
+def _resolve_vector_db_dir() -> Path:
+    configured = getenv("VECTOR_DB_DIR")
+    if configured is None:
+        return DEFAULT_VECTOR_DB_DIR.resolve()
+
+    candidate = Path(configured).expanduser()
+    if candidate == DOCKER_VECTOR_DB_DIR and not _is_running_in_container():
+        return DEFAULT_VECTOR_DB_DIR.resolve()
+    return candidate.resolve()
+
+
+def _resolve_documents_dir() -> Path:
+    configured = getenv("DOCUMENTS_DIR")
+    if configured is None:
+        return DEFAULT_DOCUMENTS_DIR.resolve()
+
+    candidate = Path(configured).expanduser()
+    if candidate == DOCKER_DOCUMENTS_DIR and not _is_running_in_container():
+        return DEFAULT_DOCUMENTS_DIR.resolve()
+    return candidate.resolve()
+
+
 DEFAULT_VECTOR_DB_DIR = SERVER_DIR / "chrome_langchain_db"
 DEFAULT_DOCUMENTS_DIR = _resolve_default_documents_dir()
 
@@ -31,10 +59,8 @@ LOG_LEVEL = getenv("LOG_LEVEL", "INFO") or "INFO"
 OLLAMA_HOST = (getenv("OLLAMA_HOST", "http://localhost:11434") or "http://localhost:11434").rstrip(
     "/"
 )
-VECTOR_DB_DIR = Path(getenv("VECTOR_DB_DIR", str(DEFAULT_VECTOR_DB_DIR)) or DEFAULT_VECTOR_DB_DIR)
-VECTOR_DB_DIR = VECTOR_DB_DIR.resolve()
-DOCUMENTS_DIR = Path(getenv("DOCUMENTS_DIR", str(DEFAULT_DOCUMENTS_DIR)) or DEFAULT_DOCUMENTS_DIR)
-DOCUMENTS_DIR = DOCUMENTS_DIR.resolve()
+VECTOR_DB_DIR = _resolve_vector_db_dir()
+DOCUMENTS_DIR = _resolve_documents_dir()
 CHROMA_COLLECTION_NAME = getenv("CHROMA_COLLECTION_NAME", "edu_documents") or "edu_documents"
 HF_EMBEDDING_MODEL = (
     getenv("HF_EMBEDDING_MODEL", "cointegrated/rubert-tiny2") or "cointegrated/rubert-tiny2"
