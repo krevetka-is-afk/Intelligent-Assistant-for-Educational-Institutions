@@ -29,6 +29,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # COPY src/client /client
 COPY ./src ./src
 COPY ./data_and_documents ./data_and_documents
+COPY ./app_runtime.py ./app_runtime.py
 
 COPY VERSION ./
 
@@ -70,6 +71,7 @@ FROM runtime-base AS server
 COPY --from=build --chown=appuser:appgroup /app /app
 COPY --from=build --chown=appuser:appgroup /_project/src/server /server
 COPY --from=build --chown=appuser:appgroup /_project/data_and_documents /data_and_documents
+COPY --from=build --chown=appuser:appgroup /_project/app_runtime.py /server/app_runtime.py
 RUN chmod -R a+rX /app /server
 
 WORKDIR /server
@@ -78,6 +80,20 @@ WORKDIR /server
 EXPOSE 8000
 
 CMD ["/app/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+############################
+# Runtime stage: bot
+############################
+FROM runtime-base AS bot
+
+COPY --from=build --chown=appuser:appgroup /app /app
+COPY --from=build --chown=appuser:appgroup /_project/src/bot /bot
+COPY --from=build --chown=appuser:appgroup /_project/app_runtime.py /bot/app_runtime.py
+RUN chmod -R a+rX /app /bot
+
+WORKDIR /bot
+
+CMD ["/app/bin/python", "bot.py"]
 
 ############################
 # Runtime stage: client
@@ -91,6 +107,7 @@ ENV PATH=/app/bin:$PATH \
 
 COPY --from=build --chown=appuser:appgroup /app /app
 COPY --from=build --chown=appuser:appgroup /_project/src/client /client
+COPY --from=build --chown=appuser:appgroup /_project/app_runtime.py /client/app_runtime.py
 RUN chmod -R a+rX /app /client
 
 WORKDIR /client
