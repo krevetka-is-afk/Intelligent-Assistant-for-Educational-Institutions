@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from app_runtime import getenv
+
 SERVER_DIR = Path(__file__).resolve().parents[1]
 
 
@@ -23,17 +25,26 @@ def _resolve_default_documents_dir() -> Path:
 DEFAULT_VECTOR_DB_DIR = SERVER_DIR / "chrome_langchain_db"
 DEFAULT_DOCUMENTS_DIR = _resolve_default_documents_dir()
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
-VECTOR_DB_DIR = Path(os.getenv("VECTOR_DB_DIR", str(DEFAULT_VECTOR_DB_DIR))).resolve()
-DOCUMENTS_DIR = Path(os.getenv("DOCUMENTS_DIR", str(DEFAULT_DOCUMENTS_DIR))).resolve()
-CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "edu_documents")
-HF_EMBEDDING_MODEL = os.getenv("HF_EMBEDDING_MODEL", "cointegrated/rubert-tiny2")
-LLM_MODEL = os.getenv("LLM_MODEL", "mistral:7b")
-RAG_TOP_K = int(os.getenv("RAG_TOP_K", "4"))
-RAG_TOTAL_TIMEOUT_SECONDS = float(os.getenv("RAG_TOTAL_TIMEOUT_SECONDS", "20"))
-LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "18"))
-CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "500"))
-CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "100"))
+API_KEY = getenv("API_KEY")
+APP_ENV = getenv("APP_ENV", "development") or "development"
+LOG_LEVEL = getenv("LOG_LEVEL", "INFO") or "INFO"
+OLLAMA_HOST = (getenv("OLLAMA_HOST", "http://localhost:11434") or "http://localhost:11434").rstrip(
+    "/"
+)
+VECTOR_DB_DIR = Path(getenv("VECTOR_DB_DIR", str(DEFAULT_VECTOR_DB_DIR)) or DEFAULT_VECTOR_DB_DIR)
+VECTOR_DB_DIR = VECTOR_DB_DIR.resolve()
+DOCUMENTS_DIR = Path(getenv("DOCUMENTS_DIR", str(DEFAULT_DOCUMENTS_DIR)) or DEFAULT_DOCUMENTS_DIR)
+DOCUMENTS_DIR = DOCUMENTS_DIR.resolve()
+CHROMA_COLLECTION_NAME = getenv("CHROMA_COLLECTION_NAME", "edu_documents") or "edu_documents"
+HF_EMBEDDING_MODEL = (
+    getenv("HF_EMBEDDING_MODEL", "cointegrated/rubert-tiny2") or "cointegrated/rubert-tiny2"
+)
+LLM_MODEL = getenv("LLM_MODEL", "mistral:7b") or "mistral:7b"
+RAG_TOP_K = int(getenv("RAG_TOP_K", "4") or "4")
+RAG_TOTAL_TIMEOUT_SECONDS = float(getenv("RAG_TOTAL_TIMEOUT_SECONDS", "20") or "20")
+LLM_TIMEOUT_SECONDS = float(getenv("LLM_TIMEOUT_SECONDS", "18") or "18")
+CHUNK_SIZE = int(getenv("RAG_CHUNK_SIZE", "500") or "500")
+CHUNK_OVERLAP = int(getenv("RAG_CHUNK_OVERLAP", "100") or "100")
 
 LLM_PROMPT_TEMPLATE = """
 Ты отвечаешь на вопросы студентов и сотрудников по документам учебного процесса.
@@ -59,3 +70,9 @@ def validate_chunk_settings() -> None:
         raise ValueError("RAG_CHUNK_OVERLAP must be non-negative")
     if CHUNK_OVERLAP >= CHUNK_SIZE:
         raise ValueError("RAG_CHUNK_OVERLAP must be smaller than RAG_CHUNK_SIZE")
+
+
+def validate_runtime_config() -> None:
+    if API_KEY is None:
+        raise RuntimeError("API_KEY is not set")
+    validate_chunk_settings()

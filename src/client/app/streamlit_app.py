@@ -4,18 +4,14 @@ import os
 import requests
 import streamlit as st
 
+from app_runtime import log_extra, setup_logging
+
+setup_logging("client")
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+API_KEY = os.getenv("API_KEY")
 API_URL = f"{API_BASE_URL}/ask"
 
 logger = logging.getLogger("client")
-logger.setLevel(logging.DEBUG)
-
-if not logger.hasHandlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-logger.propagate = False
 
 
 st.title("ask about study process")
@@ -52,17 +48,25 @@ promt = st.chat_input("pass your question here")
 
 
 def get_response(promt: str):
-    logger.info("Sending request to server")
+    logger.info("Sending request to server", extra=log_extra(endpoint="/ask", stage="request"))
 
     question = promt
+    headers = {"Content-Type": "application/json"}
+    if API_KEY:
+        headers["X-API-Key"] = API_KEY
 
     try:
         response = requests.post(
             url=API_URL,
             json={"question": question},
+            headers=headers,
             timeout=90,
         )
-        logger.debug("Server responded with status code %s", response.status_code)
+        logger.debug(
+            "Server responded with status code %s",
+            response.status_code,
+            extra=log_extra(endpoint="/ask", stage="response"),
+        )
         response.raise_for_status()
 
         payload = response.json()
@@ -73,11 +77,18 @@ def get_response(promt: str):
         }
 
     except requests.exceptions.ConnectionError:
-        logger.error("Cannot connect to server at %s", API_URL)
+        logger.error(
+            "Cannot connect to server at %s",
+            API_URL,
+            extra=log_extra(endpoint="/ask", stage="network", error_type="ConnectionError"),
+        )
         return {"answer": "Не удалось подключиться к серверу. Попробуйте позже."}
 
     except requests.exceptions.Timeout:
-        logger.warning("Request to server timed out")
+        logger.warning(
+            "Request to server timed out",
+            extra=log_extra(endpoint="/ask", stage="network", error_type="Timeout"),
+        )
         return {"answer": "Сервер не ответил вовремя. Попробуйте позже."}
 
     except requests.exceptions.HTTPError as e:
@@ -85,23 +96,40 @@ def get_response(promt: str):
             "Server returned HTTP %s: %s",
             e.response.status_code,
             e.response.text,
+            extra=log_extra(
+                endpoint="/ask",
+                stage="response",
+                error_type=f"http_{e.response.status_code}",
+            ),
         )
+        if e.response.status_code == 401:
+            return {"answer": "Доступ к API отклонён. Проверьте API_KEY."}
         return {"answer": "Сервер вернул ошибку."}
 
     except requests.exceptions.RequestException:
-        logger.exception("HTTP request to server failed")
+        logger.exception(
+            "HTTP request to server failed",
+            extra=log_extra(endpoint="/ask", stage="network", error_type="RequestException"),
+        )
         return {"answer": "Сервер недоступен."}
 
     except ValueError:
-        logger.exception("Failed to decode JSON response")
+        logger.exception(
+            "Failed to decode JSON response",
+            extra=log_extra(endpoint="/ask", stage="response", error_type="invalid_json"),
+        )
+        return {"answer": "Сервер вернул некорректный ответ."}
 
     except Exception:
-        logger.exception("Unexpected client error")
+        logger.exception(
+            "Unexpected client error",
+            extra=log_extra(endpoint="/ask", stage="request", error_type="unexpected"),
+        )
         return {"answer": "Unexpected error occurred."}
 
 
 if promt:
-    logger.info("User submitted a promt")
+    logger.info("User submitted a prompt", extra=log_extra(stage="ui"))
     st.chat_message("user").markdown(promt)
     st.session_state.messages.append({"role": "user", "content": promt})
 

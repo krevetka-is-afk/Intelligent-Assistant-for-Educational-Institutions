@@ -1,15 +1,26 @@
 import html
 import logging
 
-import aiohttp
-import core.config as config
 from aiogram import F, Router, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from core.crud import create_request, get_or_create_user
-from handlers.common import read_image, read_PDF
+from core.crud import get_or_create_user
+from handlers.common import (
+    EmptyExtractedTextError,
+    MediaProcessingError,
+    PDFTooLargeError,
+    prepare_text_for_api,
+    read_image,
+    read_PDF,
+    validate_pdf_size,
+)
+
+try:
+    from service import process_question
+except ImportError:  # pragma: no cover
+    from ..service import process_question
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +28,6 @@ router = Router()
 
 TELEGRAM_LIMIT = 4096
 MAX_PDF_SIZE = 20 * 1024 * 1024  # 20 MB
-RAG_API_TIMEOUT_SECONDS = 15
 
 
 class QuestionStates(StatesGroup):
@@ -95,48 +105,29 @@ def build_confirmation_preview(title: str, extracted_text: str) -> str:
     return f"📄 <b>{title}</b>\n\n{html.escape(preview, quote=False)}\n\nВсё верно?"
 
 
-async def call_ask_api(question: str) -> tuple[str, list]:
-    if not config.RAG_API_URL:
-        return "RAG_API_URL не задан в конфигурации.", []
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                config.RAG_API_URL,
-                json={"question": question},
-                timeout=aiohttp.ClientTimeout(total=RAG_API_TIMEOUT_SECONDS),
-            ) as resp:
-                data = await resp.json()
-        if not isinstance(data, dict):
-            return "Сервер вернул некорректный ответ.", []
-
-        error_message = data.get("error")
-        if isinstance(error_message, str) and error_message.strip():
-            return f"Ошибка сервера: {error_message.strip()}", data.get("sources", [])
-
-        answer = data.get("answer")
-        if isinstance(answer, str) and answer.strip():
-            return answer, data.get("sources", [])
-
-        return data.get("response", "Нет ответа от сервера."), data.get("sources", [])
-    except Exception as e:
-        logger.error("Error calling RAG API: %s", e)
-        return "Сервер недоступен. Попробуйте позже.", []
-
-
 async def send_answer(
-    message: types.Message, question: str, content_type: str, user_id: int
+    message: types.Message,
+    question: str,
+    content_type: str,
+    *,
+    raw_content: str | None = None,
 ) -> None:
     thinking = await message.answer("⏳ Обрабатываю вопрос...")
-    response, sources = await call_ask_api(question)
-    await thinking.delete()
-
-    parts = format_answer(response, sources)
-    for part in parts:
-        await message.answer(part, parse_mode="HTML", reply_markup=back_keyboard())
-
-    await create_request(
-        user_id=user_id, content_type=content_type, raw_content=question, ai_response=response
-    )
+    try:
+        await process_question(
+            telegram_id=message.from_user.id,
+            username=message.from_user.username,
+            question=question,
+            content_type=content_type,
+            raw_content=raw_content,
+            send_reply=lambda text: message.answer(
+                text,
+                parse_mode="HTML",
+                reply_markup=back_keyboard(),
+            ),
+        )
+    finally:
+        await thinking.delete()
 
 
 # ---------------------------------------------------------------------------
@@ -216,9 +207,8 @@ async def handle_text(message: types.Message, state: FSMContext) -> None:
     if not question:
         await message.answer("Вопрос не может быть пустым. Попробуй снова.")
         return
-    user = await get_or_create_user(message.from_user.id, message.from_user.username)
     await state.clear()
-    await send_answer(message, question, "text", user.id)
+    await send_answer(message, question, "text", raw_content=question)
 
 
 @router.message(QuestionStates.waiting_for_content, F.photo)
@@ -227,12 +217,18 @@ async def handle_photo(message: types.Message, state: FSMContext) -> None:
     file = await message.bot.download(photo.file_id)
     image_bytes = file.read() if hasattr(file, "read") else file
 
-    ocr_text = read_image(image_bytes)
-    if not ocr_text:
+    try:
+        ocr_text = read_image(image_bytes)
+        prepared_text = prepare_text_for_api(ocr_text)
+    except (MediaProcessingError, EmptyExtractedTextError):
         await message.answer("Не удалось распознать текст на изображении. Попробуй другое фото.")
         return
 
-    await state.update_data(pending_question=ocr_text, content_type="image")
+    await state.update_data(
+        pending_question=prepared_text,
+        raw_content=ocr_text,
+        content_type="image",
+    )
     await state.set_state(QuestionStates.awaiting_confirmation)
 
     await message.answer(
@@ -255,14 +251,24 @@ async def handle_document(message: types.Message, state: FSMContext) -> None:
     file = await message.bot.download(doc.file_id)
     pdf_bytes = file.read() if hasattr(file, "read") else file
 
-    pdf_text = read_PDF(pdf_bytes)
-    if not pdf_text:
+    try:
+        validate_pdf_size(len(pdf_bytes) if isinstance(pdf_bytes, (bytes, bytearray)) else 0)
+        pdf_text = read_PDF(pdf_bytes)
+        prepared_text = prepare_text_for_api(pdf_text)
+    except PDFTooLargeError:
+        await message.answer("Файл слишком большой. Максимальный размер — 20 МБ.")
+        return
+    except (MediaProcessingError, EmptyExtractedTextError):
         await message.answer(
             "Не удалось извлечь текст из PDF. Возможно, файл содержит только изображения."
         )
         return
 
-    await state.update_data(pending_question=pdf_text, content_type="pdf")
+    await state.update_data(
+        pending_question=prepared_text,
+        raw_content=pdf_text,
+        content_type="pdf",
+    )
     await state.set_state(QuestionStates.awaiting_confirmation)
 
     await message.answer(
@@ -281,12 +287,12 @@ async def handle_document(message: types.Message, state: FSMContext) -> None:
 async def cb_confirm_yes(callback: types.CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     question = data.get("pending_question", "")
+    raw_content = data.get("raw_content")
     content_type = data.get("content_type", "text")
     await state.clear()
 
-    user = await get_or_create_user(callback.from_user.id, callback.from_user.username)
     await callback.answer()
-    await send_answer(callback.message, question, content_type, user.id)
+    await send_answer(callback.message, question, content_type, raw_content=raw_content)
 
 
 @router.callback_query(QuestionStates.awaiting_confirmation, F.data == "confirm_no")

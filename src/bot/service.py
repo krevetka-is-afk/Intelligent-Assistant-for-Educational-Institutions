@@ -5,29 +5,27 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from app_runtime import log_extra, setup_logging
+
 from .api_client import (
     DEFAULT_TIMEOUT_SECONDS,
     AskAPIClient,
     AskAPIResponseError,
     AskAPITimeoutError,
+    AskAPIUnauthorizedError,
     AskAPIUnavailableError,
     AskSource,
 )
 from .core.crud import create_request, get_or_create_user
 
+setup_logging("bot")
 logger = logging.getLogger("bot.service")
-logger.setLevel(logging.INFO)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-logger.propagate = False
 
 TIMEOUT_REPLY_TEXT = (
     f"Сервис отвечает дольше {int(DEFAULT_TIMEOUT_SECONDS)} секунд. Попробуйте позже."
 )
 UNAVAILABLE_REPLY_TEXT = "Сервис ответов сейчас недоступен. Попробуйте позже."
+UNAUTHORIZED_REPLY_TEXT = "Сервис ответов отклонил запрос. Проверьте конфигурацию доступа."
 INVALID_RESPONSE_REPLY_TEXT = "Не удалось обработать ответ сервиса. Попробуйте позже."
 TELEGRAM_MESSAGE_LIMIT = 4096
 TELEGRAM_WEB_CONTINUATION_NOTICE = "Далее в веб-интерфейсе."
@@ -189,30 +187,76 @@ async def process_question(
             "Timed out while processing question for telegram_id=%s after %.1f seconds",
             telegram_id,
             DEFAULT_TIMEOUT_SECONDS,
+            extra=log_extra(
+                telegram_id=str(telegram_id),
+                stage="network",
+                error_type="AskAPITimeoutError",
+            ),
         )
         reply_text = TIMEOUT_REPLY_TEXT
         metadata = {}
+    except AskAPIUnauthorizedError:
+        logger.error(
+            "API rejected bot credentials for telegram_id=%s",
+            telegram_id,
+            extra=log_extra(
+                telegram_id=str(telegram_id),
+                stage="auth",
+                error_type="AskAPIUnauthorizedError",
+            ),
+        )
+        reply_text = UNAUTHORIZED_REPLY_TEXT
+        metadata = {}
     except AskAPIUnavailableError:
-        logger.exception(
+        logger.error(
             "API unavailable while processing question for telegram_id=%s",
             telegram_id,
+            extra=log_extra(
+                telegram_id=str(telegram_id),
+                stage="network",
+                error_type="AskAPIUnavailableError",
+            ),
+            exc_info=True,
         )
         reply_text = UNAVAILABLE_REPLY_TEXT
         metadata = {}
     except AskAPIResponseError:
-        logger.exception("API returned invalid payload for telegram_id=%s", telegram_id)
+        logger.error(
+            "API returned invalid payload for telegram_id=%s",
+            telegram_id,
+            extra=log_extra(
+                telegram_id=str(telegram_id),
+                stage="response",
+                error_type="AskAPIResponseError",
+            ),
+            exc_info=True,
+        )
         reply_text = INVALID_RESPONSE_REPLY_TEXT
         metadata = {}
 
-    request = await create_request(
-        user_id=user.id,
-        content_type=content_type,
-        raw_content=raw_content if raw_content is not None else normalized_question,
-        ai_response=reply_text,
-    )
     await _send_reply_chunks(send_reply, reply_text)
+    request_id = -1
+    try:
+        request = await create_request(
+            user_id=user.id,
+            content_type=content_type,
+            raw_content=raw_content if raw_content is not None else normalized_question,
+            ai_response=reply_text,
+        )
+        request_id = request.id
+    except Exception:
+        logger.error(
+            "Failed to persist request history for telegram_id=%s",
+            telegram_id,
+            extra=log_extra(
+                telegram_id=str(telegram_id),
+                stage="database",
+                error_type="database_write_failed",
+            ),
+            exc_info=True,
+        )
 
-    return BotReply(message=reply_text, sources=sources, metadata=metadata, request_id=request.id)
+    return BotReply(message=reply_text, sources=sources, metadata=metadata, request_id=request_id)
 
 
 async def process_text_question(
