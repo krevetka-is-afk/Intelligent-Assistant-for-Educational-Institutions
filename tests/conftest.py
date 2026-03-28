@@ -3,7 +3,7 @@ import os
 import pytest
 from starlette.testclient import TestClient
 
-os.environ.setdefault("API_KEY", "test-api-key")
+os.environ["API_KEY"] = "test-api-key"
 
 from src.server.app.main import app  # noqa: E402
 
