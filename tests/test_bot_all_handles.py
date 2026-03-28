@@ -37,36 +37,15 @@ def _load_all_handlers_module(monkeypatch):
         def __init__(self, *, inline_keyboard):
             self.inline_keyboard = inline_keyboard
 
-    aiohttp_module = types.ModuleType("aiohttp")
-
-    class _ClientTimeout:
-        def __init__(self, *, total):
-            self.total = total
-
-    class _ClientSession:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    aiohttp_module.ClientTimeout = _ClientTimeout
-    aiohttp_module.ClientSession = _ClientSession
-    monkeypatch.setitem(sys.modules, "aiohttp", aiohttp_module)
-
     core_package = types.ModuleType("core")
     core_package.__path__ = []
     core_config = types.ModuleType("core.config")
     core_config.RAG_API_URL = "http://rag.test/ask"
     core_crud = types.ModuleType("core.crud")
 
-    async def _create_query(*args, **kwargs):
-        return None
-
     async def _get_or_create_user(*args, **kwargs):
         return types.SimpleNamespace(id=1)
 
-    core_crud.create_request = _create_query
     core_crud.get_or_create_user = _get_or_create_user
     core_package.config = core_config
     core_package.crud = core_crud
@@ -77,11 +56,24 @@ def _load_all_handlers_module(monkeypatch):
     handlers_package = types.ModuleType("handlers")
     handlers_package.__path__ = []
     handlers_common = types.ModuleType("handlers.common")
+    handlers_common.EmptyExtractedTextError = RuntimeError
+    handlers_common.MediaProcessingError = RuntimeError
+    handlers_common.PDFTooLargeError = RuntimeError
+    handlers_common.prepare_text_for_api = lambda payload: payload
     handlers_common.read_image = lambda payload: "image text"
     handlers_common.read_PDF = lambda payload: "pdf text"
+    handlers_common.validate_pdf_size = lambda size: None
     handlers_package.common = handlers_common
     monkeypatch.setitem(sys.modules, "handlers", handlers_package)
     monkeypatch.setitem(sys.modules, "handlers.common", handlers_common)
+
+    service_module = types.ModuleType("service")
+
+    async def _process_question(*args, **kwargs):
+        raise NotImplementedError
+
+    service_module.process_question = _process_question
+    monkeypatch.setitem(sys.modules, "service", service_module)
 
     aiogram_module = types.ModuleType("aiogram")
     aiogram_module.F = _Filter()
@@ -127,41 +119,46 @@ def test_build_confirmation_preview_escapes_html(monkeypatch):
     assert "a &lt; b &amp; c &gt; d" in preview
 
 
-def test_call_ask_api_uses_15_second_timeout_and_handles_error_payload(monkeypatch):
+def test_send_answer_delegates_to_process_question(monkeypatch):
     module = _load_all_handlers_module(monkeypatch)
     captured = {}
+    sent_messages = []
 
-    class _Response:
-        async def __aenter__(self):
-            return self
+    class _ThinkingMessage:
+        async def delete(self):
+            captured["thinking_deleted"] = True
 
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
+    class _Message:
+        from_user = types.SimpleNamespace(id=42, username="student")
 
-        async def json(self):
-            return {"error": "Сервис временно недоступен"}
+        async def answer(self, text, **kwargs):
+            sent_messages.append((text, kwargs))
+            if text == "⏳ Обрабатываю вопрос...":
+                return _ThinkingMessage()
+            return None
 
-    class _ClientSession:
-        async def __aenter__(self):
-            return self
+    async def _fake_process_question(**kwargs):
+        captured["question"] = kwargs["question"]
+        captured["content_type"] = kwargs["content_type"]
+        captured["raw_content"] = kwargs["raw_content"]
+        await kwargs["send_reply"]("Ответ для пользователя")
 
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
+    monkeypatch.setattr(module, "process_question", _fake_process_question)
 
-        def post(self, url, *, json, timeout):
-            captured["url"] = url
-            captured["json"] = json
-            captured["timeout_total"] = timeout.total
-            return _Response()
-
-    monkeypatch.setattr(module.aiohttp, "ClientSession", _ClientSession)
-
-    response, sources = asyncio.run(module.call_ask_api("Когда сессия?"))
+    asyncio.run(
+        module.send_answer(
+            _Message(),
+            "Когда дедлайн?",
+            "text",
+            raw_content="Когда дедлайн?",
+        )
+    )
 
     assert captured == {
-        "url": "http://rag.test/ask",
-        "json": {"question": "Когда сессия?"},
-        "timeout_total": 15,
+        "question": "Когда дедлайн?",
+        "content_type": "text",
+        "raw_content": "Когда дедлайн?",
+        "thinking_deleted": True,
     }
-    assert response == "Ошибка сервера: Сервис временно недоступен"
-    assert sources == []
+    assert sent_messages[0][0] == "⏳ Обрабатываю вопрос..."
+    assert sent_messages[1][0] == "Ответ для пользователя"

@@ -8,6 +8,8 @@ from sqlalchemy import select
 def _load_bot_modules(monkeypatch, tmp_path):
     db_path = tmp_path / "bot.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv("API_KEY", "bot-test-api-key")
+    monkeypatch.setenv("API_BASE_URL", "http://test")
 
     database = importlib.import_module("src.bot.core.database")
     database = importlib.reload(database)
@@ -27,6 +29,7 @@ def test_ask_api_client_accepts_answer_only(monkeypatch, tmp_path):
 
     async def scenario():
         async def handler(request: httpx.Request) -> httpx.Response:
+            assert request.headers["X-API-Key"] == "bot-test-api-key"
             return httpx.Response(
                 200,
                 json={
@@ -44,6 +47,28 @@ def test_ask_api_client_accepts_answer_only(monkeypatch, tmp_path):
         assert result.sources[0].content == "Документ"
         assert result.sources[0].metadata == {"page": 7}
         assert result.metadata == {}
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
+
+
+def test_ask_api_client_raises_unauthorized(monkeypatch, tmp_path):
+    database, _, api_client, _, _ = _load_bot_modules(monkeypatch, tmp_path)
+
+    async def scenario():
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401, json={"error": "Unauthorized"})
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            client = api_client.AskAPIClient(base_url="http://test", client=http_client)
+            try:
+                await client.ask("question")
+            except api_client.AskAPIUnauthorizedError:
+                return
+        raise AssertionError("AskAPIUnauthorizedError was not raised")
 
     try:
         asyncio.run(scenario())
@@ -179,6 +204,45 @@ def test_process_text_question_handles_api_unavailable(monkeypatch, tmp_path, ca
         asyncio.run(database.engine.dispose())
 
     assert "API unavailable while processing question" in caplog.text
+
+
+def test_process_text_question_handles_api_unauthorized(monkeypatch, tmp_path, caplog):
+    database, _, _, service, models = _load_bot_modules(monkeypatch, tmp_path)
+    service.logger.propagate = True
+
+    class _UnauthorizedAPIClient:
+        async def ask(self, question: str):
+            raise service.AskAPIUnauthorizedError("unauthorized")
+
+    async def scenario():
+        await database.init_db()
+        sent_messages: list[str] = []
+
+        async def send_reply(text: str) -> None:
+            sent_messages.append(text)
+
+        await service.process_text_question(
+            telegram_id=909,
+            username="student",
+            question="Есть ли доступ?",
+            send_reply=send_reply,
+            api_client=_UnauthorizedAPIClient(),
+        )
+
+        async with database.async_session_factory() as session:
+            stored_request = await session.scalar(select(models.Request))
+
+        assert stored_request is not None
+        assert stored_request.ai_response == service.UNAUTHORIZED_REPLY_TEXT
+        assert sent_messages == [service.UNAUTHORIZED_REPLY_TEXT]
+
+    try:
+        with caplog.at_level("ERROR", logger="bot.service"):
+            asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
+
+    assert "API rejected bot credentials" in caplog.text
 
 
 def test_process_question_saves_image_content_type(monkeypatch, tmp_path):
