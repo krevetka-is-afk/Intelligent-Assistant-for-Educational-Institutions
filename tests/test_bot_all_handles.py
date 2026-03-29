@@ -58,6 +58,7 @@ def _load_all_handlers_module(monkeypatch):
     core_package.__path__ = []
     core_config = types.ModuleType("core.config")
     core_config.RAG_API_URL = "http://rag.test/ask"
+    core_config.API_KEY = None
     core_crud = types.ModuleType("core.crud")
 
     async def _create_query(*args, **kwargs):
@@ -148,7 +149,7 @@ def test_call_ask_api_uses_15_second_timeout_and_handles_error_payload(monkeypat
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        def post(self, url, *, json, timeout):
+        def post(self, url, *, json, timeout, headers=None):
             captured["url"] = url
             captured["json"] = json
             captured["timeout_total"] = timeout.total

@@ -99,11 +99,13 @@ async def call_ask_api(question: str) -> tuple[str, list]:
     if not config.RAG_API_URL:
         return "RAG_API_URL не задан в конфигурации.", []
     try:
+        headers = {"X-API-Key": config.API_KEY} if config.API_KEY else {}
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 config.RAG_API_URL,
                 json={"question": question},
                 timeout=aiohttp.ClientTimeout(total=RAG_API_TIMEOUT_SECONDS),
+                headers=headers,
             ) as resp:
                 data = await resp.json()
         if not isinstance(data, dict):

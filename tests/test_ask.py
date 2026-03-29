@@ -41,10 +41,10 @@ async def _fake_ask_question(question: str) -> RAGResponse:
     )
 
 
-def test_ask_returns_compatible_contract(client, monkeypatch):
+def test_ask_returns_compatible_contract(client, auth_headers, monkeypatch):
     monkeypatch.setattr("src.server.app.main.ask_question", _fake_ask_question)
 
-    response = client.post("/ask", json={"question": "Hello world"})
+    response = client.post("/ask", json={"question": "Hello world"}, headers=auth_headers)
 
     assert response.status_code == 200
     assert response.json() == {
@@ -69,8 +69,8 @@ def test_ask_returns_compatible_contract(client, monkeypatch):
     }
 
 
-def test_ask_rejects_empty_question(client):
-    response = client.post("/ask", json={"question": "   "})
+def test_ask_rejects_empty_question(client, auth_headers):
+    response = client.post("/ask", json={"question": "   "}, headers=auth_headers)
 
     assert response.status_code == 400
     assert response.json() == {"error": "Question must be a non-empty string"}
@@ -80,10 +80,10 @@ async def _raise_empty_index(question: str) -> RAGResponse:
     raise EmptyVectorStoreError("Vector index is empty. Run indexing first.")
 
 
-def test_ask_returns_503_for_empty_index(client, monkeypatch):
+def test_ask_returns_503_for_empty_index(client, auth_headers, monkeypatch):
     monkeypatch.setattr("src.server.app.main.ask_question", _raise_empty_index)
 
-    response = client.post("/ask", json={"question": "Hello world"})
+    response = client.post("/ask", json={"question": "Hello world"}, headers=auth_headers)
 
     assert response.status_code == 503
     assert response.json() == {"error": "Vector index is empty. Run indexing first."}

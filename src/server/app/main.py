@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from uuid import uuid4
 
@@ -56,6 +57,9 @@ app.add_middleware(
 )
 
 
+_API_KEY = os.getenv("API_KEY")
+
+
 def _error_response(message: str, status_code: int) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": message})
 
@@ -84,6 +88,9 @@ async def web_interface(request: Request):
 @app.post("/ask")
 @limiter.limit("10/minute")
 async def ask(request: Request):
+    if _API_KEY and request.headers.get("X-API-Key") != _API_KEY:
+        return _error_response("Unauthorized", 401)
+
     request_id = uuid4().hex[:12]
     rag_requests_total.inc()
 
