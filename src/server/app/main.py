@@ -57,6 +57,8 @@ app.add_middleware(
 )
 
 
+# When API_KEY is not set, the /ask endpoint is open (no auth).
+# In production deployments, always set API_KEY to restrict access.
 _API_KEY = os.getenv("API_KEY")
 
 
