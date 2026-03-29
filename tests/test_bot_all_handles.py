@@ -78,6 +78,10 @@ def _load_all_handlers_module(monkeypatch):
     handlers_package = types.ModuleType("handlers")
     handlers_package.__path__ = []
     handlers_common = types.ModuleType("handlers.common")
+    class _MediaProcessingError(Exception):
+        pass
+
+    handlers_common.MediaProcessingError = _MediaProcessingError
     handlers_common.read_image = lambda payload: "image text"
     handlers_common.read_PDF = lambda payload: "pdf text"
     handlers_package.common = handlers_common
