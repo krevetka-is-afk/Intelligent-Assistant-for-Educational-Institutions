@@ -78,6 +78,7 @@ def _load_all_handlers_module(monkeypatch):
     handlers_package = types.ModuleType("handlers")
     handlers_package.__path__ = []
     handlers_common = types.ModuleType("handlers.common")
+
     class _MediaProcessingError(Exception):
         pass
 
