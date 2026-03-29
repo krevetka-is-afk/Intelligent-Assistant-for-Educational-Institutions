@@ -1,3 +1,4 @@
+import asyncio
 import html
 import logging
 
@@ -9,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from core.crud import create_request, get_or_create_user
-from handlers.common import read_image, read_PDF
+from handlers.common import MediaProcessingError, read_image, read_PDF
 
 logger = logging.getLogger(__name__)
 
@@ -120,8 +121,14 @@ async def call_ask_api(question: str) -> tuple[str, list]:
             return answer, data.get("sources", [])
 
         return data.get("response", "Нет ответа от сервера."), data.get("sources", [])
-    except Exception as e:
-        logger.error("Error calling RAG API: %s", e)
+    except asyncio.TimeoutError:
+        logger.warning("RAG API timed out after %ds", RAG_API_TIMEOUT_SECONDS)
+        return "Сервер не ответил вовремя. Попробуйте позже.", []
+    except aiohttp.ClientConnectionError as exc:
+        logger.error("Cannot connect to RAG API: %s", exc)
+        return "Сервер недоступен. Попробуйте позже.", []
+    except Exception as exc:
+        logger.error("Unexpected error calling RAG API: %s", exc)
         return "Сервер недоступен. Попробуйте позже.", []
 
 
@@ -136,9 +143,12 @@ async def send_answer(
     for part in parts:
         await message.answer(part, parse_mode="HTML", reply_markup=back_keyboard())
 
-    await create_request(
-        user_id=user_id, content_type=content_type, raw_content=question, ai_response=response
-    )
+    try:
+        await create_request(
+            user_id=user_id, content_type=content_type, raw_content=question, ai_response=response
+        )
+    except Exception as exc:
+        logger.error("Failed to save request to DB (user_id=%s): %s", user_id, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +239,15 @@ async def handle_photo(message: types.Message, state: FSMContext) -> None:
     file = await message.bot.download(photo.file_id)
     image_bytes = file.read() if hasattr(file, "read") else file
 
-    ocr_text = read_image(image_bytes)
+    try:
+        ocr_text = read_image(image_bytes)
+    except MediaProcessingError as exc:
+        logger.error("OCR failed: %s", exc)
+        await message.answer("Не удалось распознать текст на изображении. Попробуй другое фото.")
+        return
+    finally:
+        del image_bytes
+
     if not ocr_text:
         await message.answer("Не удалось распознать текст на изображении. Попробуй другое фото.")
         return
@@ -257,7 +275,17 @@ async def handle_document(message: types.Message, state: FSMContext) -> None:
     file = await message.bot.download(doc.file_id)
     pdf_bytes = file.read() if hasattr(file, "read") else file
 
-    pdf_text = read_PDF(pdf_bytes)
+    try:
+        pdf_text = read_PDF(pdf_bytes)
+    except MediaProcessingError as exc:
+        logger.error("PDF extraction failed: %s", exc)
+        await message.answer(
+            "Не удалось извлечь текст из PDF. Возможно, файл содержит только изображения."
+        )
+        return
+    finally:
+        del pdf_bytes
+
     if not pdf_text:
         await message.answer(
             "Не удалось извлечь текст из PDF. Возможно, файл содержит только изображения."
