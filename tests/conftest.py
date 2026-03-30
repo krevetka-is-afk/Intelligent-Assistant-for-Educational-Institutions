@@ -1,5 +1,6 @@
 import asyncio
 import os
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -7,7 +8,7 @@ from starlette.testclient import TestClient
 
 os.environ["API_KEY"] = "test-api-key"
 os.environ["SHOW_SOURCES"] = "1"
-TEST_WEB_AUTH_DB_PATH = Path("/tmp/intelligent_assistant_test_web_auth.db")
+TEST_WEB_AUTH_DB_PATH = Path(tempfile.gettempdir()) / "intelligent_assistant_test_web_auth.db"
 os.environ["WEB_BOOTSTRAP_ADMIN_TOKEN"] = "bootstrap-test-token"
 os.environ["WEB_AUTH_DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_WEB_AUTH_DB_PATH}"
 os.environ["PREPARE_RAG_ON_STARTUP"] = "0"
@@ -22,6 +23,7 @@ TEST_BOOTSTRAP_TOKEN = "bootstrap-test-token"
 
 
 async def _reset_web_auth_db() -> None:
+    TEST_WEB_AUTH_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.drop_all)
         await connection.run_sync(Base.metadata.create_all)
