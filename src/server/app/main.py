@@ -68,6 +68,13 @@ except RuntimeError as exc:
     raise
 
 limiter = Limiter(key_func=get_remote_address)
+WEB_CREDENTIALS_VALIDATION_MESSAGE = (
+    "Проверьте имя пользователя и пароль. Имя пользователя должно быть непустым, "
+    "не длиннее 128 символов, пароль — от 8 до 255 символов."
+)
+WEB_INVITE_EXPIRY_VALIDATION_MESSAGE = "Срок действия инвайта должен\
+     быть положительным числом часов."
+VECTOR_INDEX_EMPTY_MESSAGE = "Vector index is empty. Run indexing first."
 
 
 def _prepare_rag_runtime() -> None:
@@ -332,12 +339,16 @@ async def web_login(
 
     try:
         user = await authenticate_user(username, password)
-    except ValueError as exc:
+    except ValueError:
         logger.warning(
             "Rejected invalid web login payload",
             extra=log_extra(endpoint="/web/login", error_type="invalid_payload"),
         )
-        return await _render_web_page(request, error_message=str(exc), status_code=400)
+        return await _render_web_page(
+            request,
+            error_message=WEB_CREDENTIALS_VALIDATION_MESSAGE,
+            status_code=400,
+        )
     except InvalidCredentialsError:
         logger.warning(
             "Rejected unauthorized web login",
@@ -402,8 +413,12 @@ async def web_bootstrap(
             error_message="Такое имя пользователя уже занято.",
             status_code=409,
         )
-    except ValueError as exc:
-        return await _render_web_page(request, error_message=str(exc), status_code=400)
+    except ValueError:
+        return await _render_web_page(
+            request,
+            error_message=WEB_CREDENTIALS_VALIDATION_MESSAGE,
+            status_code=400,
+        )
 
     session_token = await create_web_session(
         user_id=user.id,
@@ -442,8 +457,12 @@ async def web_accept_invite(
             error_message="Такое имя пользователя уже занято.",
             status_code=409,
         )
-    except ValueError as exc:
-        return await _render_web_page(request, error_message=str(exc), status_code=400)
+    except ValueError:
+        return await _render_web_page(
+            request,
+            error_message=WEB_CREDENTIALS_VALIDATION_MESSAGE,
+            status_code=400,
+        )
 
     session_token = await create_web_session(
         user_id=user.id,
@@ -489,8 +508,12 @@ async def web_create_invite(
             recipient_label=recipient_label,
             expires_in_hours=expires_in_hours,
         )
-    except ValueError as exc:
-        return await _render_web_page(request, error_message=str(exc), status_code=400)
+    except ValueError:
+        return await _render_web_page(
+            request,
+            error_message=WEB_INVITE_EXPIRY_VALIDATION_MESSAGE,
+            status_code=400,
+        )
 
     return await _render_web_page(
         request,
@@ -579,7 +602,7 @@ async def _process_question(
                 error_type=type(exc).__name__,
             ),
         )
-        return _error_response(str(exc), 503, code="vector_index_empty")
+        return _error_response(VECTOR_INDEX_EMPTY_MESSAGE, 503, code="vector_index_empty")
     except VectorStoreUnavailableError:
         rag_errors_total.labels(stage="vector_store").inc()
         logger.exception(
