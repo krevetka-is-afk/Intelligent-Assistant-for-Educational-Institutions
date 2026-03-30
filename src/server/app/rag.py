@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama.llms import OllamaLLM
+
+from app_runtime import log_extra
 
 from . import config
 from .vector import RetrievedDocument, similarity_search
@@ -25,6 +28,7 @@ _ALLOWED_METADATA_KEYS = {
 }
 
 _llm_chain = None
+logger = logging.getLogger("server.rag")
 
 
 @dataclass(slots=True)
@@ -199,10 +203,19 @@ async def ask_question(question: str) -> RAGResponse:
         except asyncio.TimeoutError:
             fallback_used = True
             fallback_reason = "llm_timeout"
+            logger.error(
+                "LLM call timed out, switching to fallback",
+                extra=log_extra(stage="llm", error_type="TimeoutError"),
+            )
             answer = build_fallback_answer(retrieved_documents)
-        except Exception:
+        except Exception as exc:
             fallback_used = True
             fallback_reason = "llm_unavailable"
+            logger.error(
+                "LLM call failed, switching to fallback: %s",
+                exc,
+                extra=log_extra(stage="llm", error_type=type(exc).__name__),
+            )
             answer = build_fallback_answer(retrieved_documents)
         finally:
             generation_elapsed = perf_counter() - generation_started

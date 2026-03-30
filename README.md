@@ -1,62 +1,53 @@
 # Intelligent-Assistant-for-Educational-Institutions
 
-Практико-ориентированный проект по созданию интеллектуального ассистента для образовательных учреждений. В текущем состоянии репозиторий содержит:
+Практико-ориентированный проект интеллектуального ассистента для образовательных учреждений. Репозиторий включает:
 
 - RAG API на FastAPI (`src/server`)
-- веб-интерфейс на Streamlit (`src/client`) и html
-- сервисный слой Telegram-бота с историей запросов в БД (`src/bot`)
-- OCR/PDF-обработку, индексатор документов и выдачу ответа вместе со списком источников
+- веб-интерфейсы на встроенном `/web` и Streamlit (`src/client`)
+- Telegram-бота с сохранением истории запросов в PostgreSQL (`src/bot`)
+- индексатор документов, OCR/PDF-обработку и Chroma-векторное хранилище
 
 ![CI](https://github.com/krevetka-is-afk/Intelligent-Assistant-for-Educational-Institutions/actions/workflows/ci.yml/badge.svg)
 
-## Что уже реализовано
+## Что реализовано
 
-- команды и сервисный слой бота
-- обработка текста, изображений через OCR и PDF
-- отдельный CLI-индексатор документов для Chroma
-- Chroma + HuggingFace ruBERT-tiny2 эмбеддинги по реальному корпусу документов
-- сохранение истории запросов в БД
-- fallback-ответ при недоступности LLM, confidence и метрики `/metrics`
-
-## Требования
-
-- Python 3.11+
-- [uv](https://docs.astral.sh/uv/)
-- локально установленный [Ollama](https://ollama.com/) с моделями:
-  - `mistral:7b`
-- Tesseract OCR с языками `rus` и `eng` для локального OCR/PDF-сценария
+- `POST /ask` защищён заголовком `X-API-Key`
+- браузерный `/web` работает через bootstrap-admin, обычных web-пользователей и одноразовые invite-коды, а `POST /web/ask` использует HttpOnly-сессию без раскрытия backend `API_KEY` в JavaScript
+- FastAPI, Streamlit и Telegram-бот используют единый env-контракт и структурированное логирование
+- `docker-compose.yaml` поднимает `db`, `server`, `bot`, `client` с healthcheck и `restart: unless-stopped`
+- при сбоях LLM RAG возвращает fallback-ответ и логирует причину на уровне `ERROR`
 
 ## Переменные окружения
 
-| Переменная | Где используется | Значение по умолчанию | Назначение |
-| --- | --- | --- | --- |
-| `OLLAMA_HOST` | `server` | `http://localhost:11434` | URL локального Ollama |
-| `LLM_MODEL` | `server` | `mistral:7b` | Модель Ollama для генерации ответа |
-| `VECTOR_DB_DIR` | `server` | `src/server/chrome_langchain_db` | Путь к директории с Chroma DB |
-| `DOCUMENTS_DIR` | `server`, `indexer` | `data_and_documents` | Каталог с исходным корпусом документов |
-| `HF_EMBEDDING_MODEL` | `server`, `indexer` | `cointegrated/rubert-tiny2` | HuggingFace-модель эмбеддингов |
-| `CHROMA_COLLECTION_NAME` | `server`, `indexer` | `edu_documents` | Имя коллекции Chroma |
-| `RAG_TOP_K` | `server` | `4` | Сколько чанков извлекать из Chroma |
-| `RAG_TOTAL_TIMEOUT_SECONDS` | `server` | `20` | Общий таймаут RAG |
-| `LLM_TIMEOUT_SECONDS` | `server` | `18` | Таймаут вызова LLM внутри RAG |
-| `API_BASE_URL` | `client`, `bot` | `http://localhost:8000` | Базовый URL FastAPI-сервера |
-| `DATABASE_URL` | `bot` | нет | База истории запросов Telegram-слоя |
+Основной шаблон конфигурации: [`.env.example`](.env.example)
 
-Пример локального `.env`:
+| Переменная | Где используется | Назначение |
+| --- | --- | --- |
+| `APP_ENV` | `server`, `bot`, `client` | Имя окружения для логов |
+| `LOG_LEVEL` | `server`, `bot`, `client` | Уровень логирования |
+| `API_KEY` | `server`, `bot`, `client` | Shared secret для `X-API-Key` |
+| `SHOW_SOURCES` | `server`, `bot`, `client` | Показывать ли источники в `/web`, Streamlit и Telegram-боте |
+| `WEB_BOOTSTRAP_ADMIN_TOKEN` | `server` | Bootstrap token для создания первого web-admin |
+| `WEB_AUTH_DATABASE_URL` | `server` | SQLAlchemy URL хранилища web users, invite-кодов и web-сессий. Если не задан, локально используется `./.web_auth.db`, а в контейнере `/data/web_auth.db` |
+| `API_BASE_URL` | `bot`, `client` | Базовый URL FastAPI |
+| `BOT_TOKEN` | `bot` | Telegram bot token |
+| `DATABASE_URL` | `bot` | SQLAlchemy URL для истории запросов |
+| `POSTGRES_DB` | `compose`, `db` | Имя базы PostgreSQL |
+| `POSTGRES_USER` | `compose`, `db` | Пользователь PostgreSQL |
+| `POSTGRES_PASSWORD` | `compose`, `db` | Пароль PostgreSQL |
+| `OLLAMA_HOST` | `server` | URL локальной Ollama |
+| `LLM_MODEL` | `server` | Модель LLM |
+| `HF_EMBEDDING_MODEL` | `server`, `indexer` | Модель эмбеддингов |
+| `CHROMA_COLLECTION_NAME` | `server`, `indexer` | Имя коллекции Chroma |
+| `VECTOR_DB_DIR` | `server`, `indexer` | Директория векторной БД |
+| `DOCUMENTS_DIR` | `server`, `indexer` | Каталог корпуса документов |
+| `RAG_TOP_K` | `server` | Сколько чанков доставать из Chroma |
+| `RAG_TOTAL_TIMEOUT_SECONDS` | `server` | Общий бюджет времени RAG |
+| `LLM_TIMEOUT_SECONDS` | `server` | Таймаут вызова LLM |
+| `PREPARE_RAG_ON_STARTUP` | `server` | Подготавливать ли embeddings/vector store до ready-состояния сервиса |
+| `AUTO_INDEX_ON_STARTUP` | `server` | Автоматически индексировать `DOCUMENTS_DIR`, если vector store пуст на старте |
 
-```env
-OLLAMA_HOST=http://localhost:11434
-LLM_MODEL=mistral:7b
-DOCUMENTS_DIR=$(pwd)/data_and_documents
-HF_EMBEDDING_MODEL=cointegrated/rubert-tiny2
-CHROMA_COLLECTION_NAME=edu_documents
-VECTOR_DB_DIR=/absolute/path/to/chroma_db
-RAG_TOP_K=4
-RAG_TOTAL_TIMEOUT_SECONDS=20
-LLM_TIMEOUT_SECONDS=18
-API_BASE_URL=http://localhost:8000
-DATABASE_URL=sqlite+aiosqlite:///./bot.db
-```
+`RAG_API_URL` оставлен только как legacy-алиас для Telegram-слоя и больше не является основной настройкой.
 
 ## Локальный запуск
 
@@ -65,100 +56,122 @@ DATABASE_URL=sqlite+aiosqlite:///./bot.db
 ```bash
 git submodule update --init --recursive
 uv venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
+source .venv/bin/activate
 uv sync --group dev
 export PYTHONPATH=.
 ```
 
-### 2. Индексация реального корпуса документов
+### 2. Конфигурация
 
 ```bash
-source .venv/bin/activate
-export PYTHONPATH=.
-export DOCUMENTS_DIR="$(pwd)/data_and_documents"
-export VECTOR_DB_DIR="$(pwd)/src/server/chrome_langchain_db"
-uv run python -m src.server.app.index_documents --input-dir "$DOCUMENTS_DIR" --persist-dir "$VECTOR_DB_DIR" --rebuild
+cp .env.example .env
 ```
 
-### 3. Запуск API
+Минимально для локальной разработки должны быть заданы:
+
+```env
+APP_ENV=development
+LOG_LEVEL=INFO
+API_KEY=change-me
+SHOW_SOURCES=1
+WEB_BOOTSTRAP_ADMIN_TOKEN=change-me-bootstrap-token
+API_BASE_URL=http://localhost:8000
+BOT_TOKEN=replace-with-real-token
+DATABASE_URL=sqlite+aiosqlite:///./bot.db
+OLLAMA_HOST=http://localhost:11434
+```
+
+`WEB_AUTH_DATABASE_URL` можно не задавать: сервер сам выберет подходящий путь для локального запуска и контейнера.
+Если нужно временно скрыть источники во всех интерфейсах, установите `SHOW_SOURCES=0`.
+
+Первый вход в `/web` делается через bootstrap token:
+
+1. оператор сервера задаёт `WEB_BOOTSTRAP_ADMIN_TOKEN`
+2. первый администратор открывает `/web` и создаёт admin-учётную запись
+3. администратор выпускает одноразовые invite-коды для обычных web-пользователей
+4. пользователь активирует invite-код и создаёт собственные login/password
+
+### 3. Индексация документов
 
 ```bash
 source .venv/bin/activate
 export PYTHONPATH=.
-export OLLAMA_HOST=http://localhost:11434
-export VECTOR_DB_DIR="$(pwd)/src/server/chrome_langchain_db"
-export LLM_MODEL=mistral:7b
+uv run python -m src.server.app.index_documents \
+  --input-dir "$(pwd)/data_and_documents" \
+  --persist-dir "$(pwd)/src/server/chrome_langchain_db" \
+  --rebuild
+```
+
+### 4. Запуск FastAPI
+
+```bash
+source .venv/bin/activate
+export PYTHONPATH=.
 uv run uvicorn src.server.app.main:app --reload
 ```
 
-API будет доступно на `http://localhost:8000`, healthcheck: `http://localhost:8000/health`, метрики: `http://localhost:8000/metrics`.
+Основные endpoints:
 
-### 4. Запуск веб-интерфейса
+- `GET /health`
+- `GET /metrics` c `X-API-Key`
+- `GET /web`
+- `POST /web/bootstrap`
+- `POST /web/login`
+- `POST /web/invite/accept`
+- `POST /web/admin/invites`
+- `POST /ask` c `X-API-Key`
+- `POST /web/ask` c `X-API-Key` или серверной web-сессией после bootstrap/login/invite activation
 
-Доступен вариант через `http://localhost:8000/web`
+Пример защищённого запроса:
 
-Либо запуск Streamlit в отдельном терминале:
+```bash
+curl -X POST http://localhost:8000/ask \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -d '{"question":"Когда пересдача?"}'
+```
+
+### 5. Запуск Streamlit
 
 ```bash
 source .venv/bin/activate
 export PYTHONPATH=.
-export API_BASE_URL=http://localhost:8000
 uv run streamlit run src/client/app/streamlit_app.py
 ```
 
-Веб-интерфейс будет доступен на `http://localhost:8501`.
-
-### 5. Telegram-слой локально
-
-В этом репозитории Telegram-часть пока представлена сервисным слоем и обработчиками (`src/bot/service.py`, `src/bot/handlers/common.py`), которые:
-
-- вызывают `/ask`
-- сохраняют историю запросов в БД
-- форматируют ответ и краткий список источников
-- режут длинные сообщения под лимит Telegram
-
-Для локальной проверки bot-а:
+### 6. Запуск Telegram-бота
 
 ```bash
 source .venv/bin/activate
 export PYTHONPATH=.
-export DATABASE_URL=sqlite+aiosqlite:///./bot.db
-PYTHONPATH=. uv run pytest tests/test_bot_service.py tests/test_bot_handlers_common.py -q
+uv run python -m src.bot.bot
 ```
 
-Отдельный polling/webhook runner Telegram-бота и отдельный `bot`-сервис в `docker-compose.yaml` в текущем срезе репозитория отсутствуют.
+## Docker Compose
 
-## Запуск через Docker Compose
+Файл [`docker-compose.yaml`](docker-compose.yaml) поднимает:
 
-`docker-compose.yaml` поднимает:
-
+- `db` на PostgreSQL 16
 - `server` на `http://localhost:8000`
 - `client` на `http://localhost:8501`
+- `bot` как отдельный контейнер
 
-Перед запуском создайте `.env` рядом с `docker-compose.yaml`, например:
-
-```env
-OLLAMA_HOST=http://host.docker.internal:11434
-DOCUMENTS_DIR=/data_and_documents
-LLM_MODEL=mistral:7b
-API_BASE_URL=http://server:8000
-DATABASE_URL=sqlite+aiosqlite:///./bot.db
-```
-
-Затем выполните:
+Запуск:
 
 ```bash
+cp .env.example .env
 docker compose --profile dev up --build
 ```
 
-По умолчанию в compose:
+Проверки состояния:
 
-- векторная БД хранится в volume `app-data`
-- `OLLAMA_HOST` указывает на Ollama на хост-машине
-- корпус документов доступен внутри server-контейнера в `/data_and_documents`
-- tg_bot пока не выделен в отдельный контейнер
+- `db`: `pg_isready`
+- `server`: `GET /health`
+- `bot`: fail-fast старт + Docker restart policy
 
-## Тесты и проверка
+Временные файлы и `/tmp` для `server`, `bot`, `client` вынесены в `tmpfs`. Operational-логи пишутся только в stdout/stderr контейнеров.
+
+## Проверки
 
 ```bash
 PYTHONPATH=. uv run pytest -q

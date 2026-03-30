@@ -7,16 +7,17 @@ from typing import Any
 
 import httpx
 
-logger = logging.getLogger("bot.api")
-logger.setLevel(logging.INFO)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-logger.propagate = False
+from app_runtime import log_extra, setup_logging
 
-DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+setup_logging("bot")
+logger = logging.getLogger("bot.api")
+
+DEFAULT_API_BASE_URL = (
+    os.getenv("API_BASE_URL") or os.getenv("RAG_API_URL", "http://localhost:8000/ask")
+).rstrip("/")
+if DEFAULT_API_BASE_URL.endswith("/ask"):
+    DEFAULT_API_BASE_URL = DEFAULT_API_BASE_URL[: -len("/ask")]
+DEFAULT_API_KEY = os.getenv("API_KEY")
 DEFAULT_TIMEOUT_SECONDS = 25.0
 
 
@@ -44,6 +45,23 @@ class AskAPITimeoutError(AskAPIError):
 class AskAPIUnavailableError(AskAPIError):
     """Raised when /ask is unreachable or returns 5xx."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        error_code: str | None = None,
+        server_message: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.error_code = error_code
+        self.server_message = server_message
+
+
+class AskAPIUnauthorizedError(AskAPIError):
+    """Raised when /ask rejects the configured API key."""
+
 
 class AskAPIResponseError(AskAPIError):
     """Raised when /ask returns an unexpected payload."""
@@ -53,11 +71,13 @@ class AskAPIClient:
     def __init__(
         self,
         base_url: str | None = None,
+        api_key: str | None = DEFAULT_API_KEY,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         resolved_base_url = (base_url or DEFAULT_API_BASE_URL).rstrip("/")
         self.api_url = f"{resolved_base_url}/ask"
+        self.api_key = api_key
         self.timeout_seconds = timeout_seconds
         self._client = client
 
@@ -77,6 +97,7 @@ class AskAPIClient:
             response = await client.post(
                 self.api_url,
                 json={"question": question},
+                headers=self._build_headers(),
                 timeout=self.timeout_seconds,
             )
         except httpx.TimeoutException as exc:
@@ -84,33 +105,66 @@ class AskAPIClient:
                 "Timed out after %.1f seconds while calling %s",
                 self.timeout_seconds,
                 self.api_url,
+                extra=log_extra(endpoint="/ask", stage="network", error_type="TimeoutException"),
             )
             raise AskAPITimeoutError("Timed out while calling /ask") from exc
         except httpx.RequestError as exc:
-            logger.error("API %s is unavailable: %s", self.api_url, exc)
+            logger.error(
+                "API %s is unavailable: %s",
+                self.api_url,
+                exc,
+                extra=log_extra(endpoint="/ask", stage="network", error_type=type(exc).__name__),
+            )
             raise AskAPIUnavailableError("API is unavailable") from exc
 
+        if response.status_code == 401:
+            logger.error(
+                "API %s rejected the configured API key",
+                self.api_url,
+                extra=log_extra(endpoint="/ask", stage="auth", error_type="unauthorized"),
+            )
+            raise AskAPIUnauthorizedError("API rejected the configured API key")
         if response.status_code >= 500:
+            error_message, error_code = self._extract_error_details(response)
             logger.error(
                 "API %s returned %s: %s",
                 self.api_url,
                 response.status_code,
                 response.text,
+                extra=log_extra(
+                    endpoint="/ask",
+                    stage="response",
+                    error_type=f"http_{response.status_code}",
+                ),
             )
-            raise AskAPIUnavailableError("API is unavailable")
+            raise AskAPIUnavailableError(
+                "API is unavailable",
+                status_code=response.status_code,
+                error_code=error_code,
+                server_message=error_message,
+            )
         if response.status_code >= 400:
             logger.error(
                 "API %s returned %s: %s",
                 self.api_url,
                 response.status_code,
                 response.text,
+                extra=log_extra(
+                    endpoint="/ask",
+                    stage="response",
+                    error_type=f"http_{response.status_code}",
+                ),
             )
             raise AskAPIResponseError(f"API returned HTTP {response.status_code}")
 
         try:
             payload = response.json()
         except ValueError as exc:
-            logger.exception("API %s returned invalid JSON", self.api_url)
+            logger.exception(
+                "API %s returned invalid JSON",
+                self.api_url,
+                extra=log_extra(endpoint="/ask", stage="response", error_type="invalid_json"),
+            )
             raise AskAPIResponseError("API returned invalid JSON") from exc
 
         answer = payload.get("answer")
@@ -119,18 +173,29 @@ class AskAPIClient:
                 "API %s returned payload without answer: %s",
                 self.api_url,
                 payload,
+                extra=log_extra(endpoint="/ask", stage="response", error_type="invalid_payload"),
             )
             raise AskAPIResponseError("API payload does not contain answer text")
 
         raw_sources = payload.get("sources", [])
         if not isinstance(raw_sources, list):
-            logger.error("API %s returned invalid sources payload: %s", self.api_url, payload)
+            logger.error(
+                "API %s returned invalid sources payload: %s",
+                self.api_url,
+                payload,
+                extra=log_extra(endpoint="/ask", stage="response", error_type="invalid_payload"),
+            )
             raise AskAPIResponseError("API payload contains invalid sources")
 
         sources: list[AskSource] = []
         for source in raw_sources:
             if not isinstance(source, dict):
-                logger.warning("Skipping malformed source item from %s: %s", self.api_url, source)
+                logger.warning(
+                    "Skipping malformed source item from %s: %s",
+                    self.api_url,
+                    source,
+                    extra=log_extra(endpoint="/ask", stage="response", error_type="invalid_source"),
+                )
                 continue
 
             content = source.get("content", "")
@@ -147,3 +212,24 @@ class AskAPIClient:
             metadata = {}
 
         return AskResult(answer=answer.strip(), sources=sources, metadata=metadata)
+
+    def _build_headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+        return headers
+
+    @staticmethod
+    def _extract_error_details(response: httpx.Response) -> tuple[str | None, str | None]:
+        try:
+            payload = response.json()
+        except ValueError:
+            return None, None
+
+        error_message = payload.get("error")
+        error_code = payload.get("code")
+        if not isinstance(error_message, str):
+            error_message = None
+        if not isinstance(error_code, str):
+            error_code = None
+        return error_message, error_code
