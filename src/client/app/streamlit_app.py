@@ -149,7 +149,6 @@ def get_response(promt: str):
             json={"question": question},
             headers=headers,
             timeout=90,
-            headers=headers,
         )
         logger.debug(
             "Server responded with status code %s",
