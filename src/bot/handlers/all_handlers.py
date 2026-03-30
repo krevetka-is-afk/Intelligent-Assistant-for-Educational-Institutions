@@ -6,8 +6,10 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from core.crud import get_or_create_user
-from handlers.common import (
+
+from ..core.crud import get_or_create_user
+from ..service import process_question
+from .common import (
     EmptyExtractedTextError,
     MediaProcessingError,
     PDFTooLargeError,
@@ -16,11 +18,6 @@ from handlers.common import (
     read_PDF,
     validate_pdf_size,
 )
-
-try:
-    from service import process_question
-except ImportError:  # pragma: no cover
-    from ..service import process_question
 
 logger = logging.getLogger(__name__)
 

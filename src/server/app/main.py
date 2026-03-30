@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import base64
 import hmac
 import json
 import logging
+import time
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, Request
+from fastapi import Depends, FastAPI, Form, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -50,6 +52,8 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+WEB_SESSION_COOKIE_NAME = "web_session"
+WEB_SESSION_MAX_AGE_SECONDS = 8 * 60 * 60
 
 app.add_middleware(
     CORSMiddleware,
@@ -88,23 +92,170 @@ async def health_check():
 
 
 @app.get("/metrics")
-async def metrics() -> Response:
+async def metrics(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> Response:
+    if not _is_valid_api_key(x_api_key):
+        logger.warning(
+            "Rejected unauthorized request to protected endpoint",
+            extra=log_extra(endpoint="/metrics", error_type="unauthorized"),
+        )
+        raise UnauthorizedAPIKeyError("Unauthorized")
+
     payload, content_type = render_metrics()
     return Response(content=payload, media_type=content_type)
 
 
 @app.get("/web", response_class=HTMLResponse)
-async def web_interface(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+async def web_interface(
+    request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")
+):
+    authenticated = _has_valid_web_session(request)
+    response = templates.TemplateResponse(
+        request,
+        "index.html",
+        {
+            "authenticated": authenticated,
+            "error_message": None,
+            "web_login_enabled": config.WEB_UI_PASSWORD is not None,
+        },
+    )
+    return response
 
 
 async def verify_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
-    if x_api_key is None or not hmac.compare_digest(x_api_key, config.API_KEY or ""):
+    if not _is_valid_api_key(x_api_key):
         logger.warning(
             "Rejected unauthorized request to protected endpoint",
             extra=log_extra(endpoint="/ask", error_type="unauthorized"),
         )
         raise UnauthorizedAPIKeyError("Unauthorized")
+
+
+def _is_valid_api_key(candidate: str | None) -> bool:
+    return candidate is not None and hmac.compare_digest(candidate, config.API_KEY or "")
+
+
+def _is_valid_web_password(candidate: str | None) -> bool:
+    return (
+        candidate is not None
+        and config.WEB_UI_PASSWORD is not None
+        and hmac.compare_digest(candidate, config.WEB_UI_PASSWORD)
+    )
+
+
+def _build_web_session_signature(expires_at: int) -> str:
+    digest = hmac.new(
+        (config.WEB_UI_PASSWORD or "").encode("utf-8"),
+        str(expires_at).encode("utf-8"),
+        digestmod="sha256",
+    ).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def _build_web_session_cookie() -> str:
+    if config.WEB_UI_PASSWORD is None:
+        raise RuntimeError("WEB_UI_PASSWORD is not set")
+    expires_at = int(time.time()) + WEB_SESSION_MAX_AGE_SECONDS
+    signature = _build_web_session_signature(expires_at)
+    return f"{expires_at}.{signature}"
+
+
+def _has_valid_web_session(request: Request) -> bool:
+    if config.WEB_UI_PASSWORD is None:
+        return False
+
+    token = request.cookies.get(WEB_SESSION_COOKIE_NAME)
+    if not token:
+        return False
+
+    expires_at_text, _, signature = token.partition(".")
+    if not expires_at_text or not signature:
+        return False
+
+    try:
+        expires_at = int(expires_at_text)
+    except ValueError:
+        return False
+
+    if expires_at <= int(time.time()):
+        return False
+
+    expected_signature = _build_web_session_signature(expires_at)
+    return hmac.compare_digest(signature, expected_signature)
+
+
+def _set_web_session_cookie(response: Response, request: Request) -> None:
+    response.set_cookie(
+        key=WEB_SESSION_COOKIE_NAME,
+        value=_build_web_session_cookie(),
+        max_age=WEB_SESSION_MAX_AGE_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+    )
+
+
+def _clear_web_session_cookie(response: Response) -> None:
+    response.delete_cookie(WEB_SESSION_COOKIE_NAME)
+
+
+async def verify_web_access(
+    request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")
+) -> None:
+    if _is_valid_api_key(x_api_key) or _has_valid_web_session(request):
+        return
+
+    logger.warning(
+        "Rejected unauthorized request to web endpoint",
+        extra=log_extra(endpoint="/web/ask", error_type="unauthorized"),
+    )
+    raise UnauthorizedAPIKeyError("Unauthorized")
+
+
+@app.post("/web/login")
+@limiter.limit("5/minute")
+async def web_login(request: Request, web_password: str = Form(...)) -> Response:
+    if config.WEB_UI_PASSWORD is None:
+        logger.warning(
+            "Rejected web login because WEB_UI_PASSWORD is not configured",
+            extra=log_extra(endpoint="/web/login", error_type="web_auth_disabled"),
+        )
+        return templates.TemplateResponse(
+            request,
+            "index.html",
+            {
+                "authenticated": False,
+                "error_message": "Веб-вход отключен. Установите WEB_UI_PASSWORD на сервере.",
+                "web_login_enabled": False,
+            },
+            status_code=503,
+        )
+
+    if not _is_valid_web_password(web_password):
+        logger.warning(
+            "Rejected unauthorized web login",
+            extra=log_extra(endpoint="/web/login", error_type="unauthorized"),
+        )
+        return templates.TemplateResponse(
+            request,
+            "index.html",
+            {
+                "authenticated": False,
+                "error_message": "Неверный web-пароль.",
+                "web_login_enabled": True,
+            },
+            status_code=401,
+        )
+
+    response = RedirectResponse(url="/web", status_code=303)
+    _set_web_session_cookie(response, request)
+    return response
+
+
+@app.post("/web/logout")
+async def web_logout() -> RedirectResponse:
+    response = RedirectResponse(url="/web", status_code=303)
+    _clear_web_session_cookie(response)
+    return response
 
 
 async def _parse_question(
@@ -245,7 +396,7 @@ async def ask(request: Request, _: None = Depends(verify_api_key)):
 
 @app.post("/web/ask")
 @limiter.limit("10/minute")
-async def ask_from_web(request: Request):
+async def ask_from_web(request: Request, _: None = Depends(verify_web_access)):
     request_id = uuid4().hex[:12]
     rag_requests_total.inc()
 

@@ -1,15 +1,16 @@
 import asyncio
 import logging
 
-import core.config as config
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
-from core.database import init_db
-from handlers.all_handlers import router
 
 from app_runtime import log_extra, setup_logging
+
+from .core import config
+from .core.database import init_db
+from .handlers.all_handlers import router
 
 setup_logging("bot")
 logger = logging.getLogger(__name__)

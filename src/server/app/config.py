@@ -54,6 +54,8 @@ DEFAULT_VECTOR_DB_DIR = SERVER_DIR / "chrome_langchain_db"
 DEFAULT_DOCUMENTS_DIR = _resolve_default_documents_dir()
 
 API_KEY = getenv("API_KEY")
+WEB_UI_PASSWORD = getenv("WEB_UI_PASSWORD")
+WEB_UI_PASSWORD = getenv("WEB_UI_PASSWORD")
 APP_ENV = getenv("APP_ENV", "development") or "development"
 LOG_LEVEL = getenv("LOG_LEVEL", "INFO") or "INFO"
 OLLAMA_HOST = (getenv("OLLAMA_HOST", "http://localhost:11434") or "http://localhost:11434").rstrip(

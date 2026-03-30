@@ -12,7 +12,7 @@
 ## Что реализовано
 
 - `POST /ask` защищён заголовком `X-API-Key`
-- браузерный `/web` использует серверный прокси `POST /web/ask` и не раскрывает API-ключ
+- браузерный `/web` требует отдельный `WEB_UI_PASSWORD`, после чего использует HttpOnly-сессию для `POST /web/ask` без раскрытия backend `API_KEY` в JavaScript
 - FastAPI, Streamlit и Telegram-бот используют единый env-контракт и структурированное логирование
 - `docker-compose.yaml` поднимает `db`, `server`, `bot`, `client` с healthcheck и `restart: unless-stopped`
 - при сбоях LLM RAG возвращает fallback-ответ и логирует причину на уровне `ERROR`
@@ -26,6 +26,7 @@
 | `APP_ENV` | `server`, `bot`, `client` | Имя окружения для логов |
 | `LOG_LEVEL` | `server`, `bot`, `client` | Уровень логирования |
 | `API_KEY` | `server`, `bot`, `client` | Shared secret для `X-API-Key` |
+| `WEB_UI_PASSWORD` | `server` | Отдельный пароль входа для встроенного `/web` |
 | `API_BASE_URL` | `bot`, `client` | Базовый URL FastAPI |
 | `BOT_TOKEN` | `bot` | Telegram bot token |
 | `DATABASE_URL` | `bot` | SQLAlchemy URL для истории запросов |
@@ -68,6 +69,7 @@ cp .env.example .env
 APP_ENV=development
 LOG_LEVEL=INFO
 API_KEY=change-me
+WEB_UI_PASSWORD=change-me-web
 API_BASE_URL=http://localhost:8000
 BOT_TOKEN=replace-with-real-token
 DATABASE_URL=sqlite+aiosqlite:///./bot.db
@@ -96,10 +98,10 @@ uv run uvicorn src.server.app.main:app --reload
 Основные endpoints:
 
 - `GET /health`
-- `GET /metrics`
+- `GET /metrics` c `X-API-Key`
 - `GET /web`
 - `POST /ask` c `X-API-Key`
-- `POST /web/ask` без клиентского секрета, только для встроенного веба
+- `POST /web/ask` c `X-API-Key` или серверной web-сессией после входа через `WEB_UI_PASSWORD`
 
 Пример защищённого запроса:
 
@@ -123,7 +125,7 @@ uv run streamlit run src/client/app/streamlit_app.py
 ```bash
 source .venv/bin/activate
 export PYTHONPATH=.
-python src/bot/bot.py
+uv run python -m src.bot.bot
 ```
 
 ## Docker Compose

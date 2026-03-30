@@ -235,6 +235,52 @@
             color: #374151;
         }
 
+        .auth-card {
+            background: #fff;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        }
+
+        .auth-card p {
+            margin-top: 0.5rem;
+            color: #4b5563;
+            line-height: 1.6;
+        }
+
+        .auth-form {
+            margin-top: 1rem;
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .auth-form input[type="password"] {
+            flex: 1;
+            padding: 0.75rem 1rem;
+            border: 1.5px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 1rem;
+            outline: none;
+        }
+
+        .auth-form button,
+        .logout-form button {
+            padding: 0.75rem 1.25rem;
+            background: #0f3460;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+        }
+
+        .logout-form {
+            margin-bottom: 1rem;
+            display: flex;
+            justify-content: flex-end;
+        }
+
         .history-item {
             background: #fff;
             border-radius: 10px;
@@ -291,6 +337,30 @@
 </header>
 
 <main>
+    {% if not authenticated %}
+    <div class="auth-card">
+        <h2>Web Access</h2>
+        <p>Для работы с веб-интерфейсом введите отдельный web-пароль. После входа сервер создаст HttpOnly-сессию и браузер сможет вызывать защищенный `/web/ask` без раскрытия backend-секретов в JavaScript.</p>
+        {% if error_message %}
+        <div class="error-msg visible">{{ error_message }}</div>
+        {% endif %}
+        {% if web_login_enabled %}
+        <form class="auth-form" method="post" action="/web/login">
+            <input
+                type="password"
+                name="web_password"
+                placeholder="Web password"
+                autocomplete="current-password"
+                required
+            />
+            <button type="submit">Sign in</button>
+        </form>
+        {% endif %}
+    </div>
+    {% else %}
+    <form class="logout-form" method="post" action="/web/logout">
+        <button type="submit">Sign out</button>
+    </form>
     <div class="question-card">
         <label for="question-input">Your question</label>
         <form id="ask-form" class="input-row">
@@ -327,6 +397,7 @@
         <h3>Previous questions</h3>
         <div id="history-list"></div>
     </div>
+    {% endif %}
 </main>
 
 <footer>
@@ -334,6 +405,7 @@
 </footer>
 
 <script>
+    {% if authenticated %}
     const form = document.getElementById("ask-form");
     const input = document.getElementById("question-input");
     const submitBtn = document.getElementById("submit-btn");
@@ -475,6 +547,7 @@
             historyList.appendChild(el);
         });
     }
+    {% endif %}
 </script>
 
 </body>

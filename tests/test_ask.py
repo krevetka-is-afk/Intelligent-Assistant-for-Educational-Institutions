@@ -111,13 +111,51 @@ def test_ask_returns_401_with_invalid_api_key(client):
     assert response.json() == {"error": "Unauthorized"}
 
 
-def test_web_ask_proxy_does_not_require_api_key(client, monkeypatch):
+def test_web_ask_requires_authentication(client, monkeypatch):
     monkeypatch.setattr("src.server.app.main.ask_question", _fake_ask_question)
+
+    response = client.post("/web/ask", json={"question": "Hello world"})
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Unauthorized"}
+
+
+def test_web_login_rejects_backend_api_key(client):
+    response = client.post(
+        "/web/login", data={"web_password": "test-api-key"}, follow_redirects=False
+    )
+
+    assert response.status_code == 401
+
+
+def test_web_ask_accepts_authenticated_web_session(client, monkeypatch, web_auth_password):
+    monkeypatch.setattr("src.server.app.main.ask_question", _fake_ask_question)
+
+    login_response = client.post(
+        "/web/login",
+        data={"web_password": web_auth_password},
+        follow_redirects=False,
+    )
+    assert login_response.status_code == 303
+    assert "web_session=" in login_response.headers["set-cookie"]
 
     response = client.post("/web/ask", json={"question": "Hello world"})
 
     assert response.status_code == 200
     assert response.json()["answer"] == "Ответ найден."
+
+
+def test_web_logout_invalidates_session(client, monkeypatch, web_auth_password):
+    monkeypatch.setattr("src.server.app.main.ask_question", _fake_ask_question)
+
+    client.post("/web/login", data={"web_password": web_auth_password}, follow_redirects=False)
+    logout_response = client.post("/web/logout", follow_redirects=False)
+
+    assert logout_response.status_code == 303
+
+    response = client.post("/web/ask", json={"question": "Hello world"})
+
+    assert response.status_code == 401
 
 
 def test_ask_rejects_malformed_json(client, auth_headers):
