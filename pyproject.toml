@@ -45,6 +45,7 @@ dependencies = [
     "prometheus-client>=0.23.1",
     "sentence-transformers>=5.1.2",
     "langchain-huggingface>=1.2.1",
+    "requests>=2.32.5",
 ]
 
 [dependency-groups]
