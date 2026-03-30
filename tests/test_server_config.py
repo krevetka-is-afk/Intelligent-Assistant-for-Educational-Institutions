@@ -41,7 +41,9 @@ def _reload_config_with_auth_url(
 
     module = importlib.import_module("src.server.app.config")
     monkeypatch.setattr(
-        module.Path, "exists", lambda self: str(self) == "/.dockerenv" if in_container else False
+        module.Path,
+        "exists",
+        lambda self: self.as_posix() == "/.dockerenv" if in_container else False,
     )
     return importlib.reload(module)
 

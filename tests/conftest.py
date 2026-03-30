@@ -24,9 +24,10 @@ TEST_BOOTSTRAP_TOKEN = "bootstrap-test-token"
 
 
 async def _reset_web_auth_db() -> None:
+    await engine.dispose()
     TEST_WEB_AUTH_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    TEST_WEB_AUTH_DB_PATH.unlink(missing_ok=True)
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.drop_all)
         await connection.run_sync(Base.metadata.create_all)
 
 
