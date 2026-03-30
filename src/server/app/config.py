@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import unquote
 
 from app_runtime import getenv
@@ -79,11 +79,10 @@ def resolve_sqlite_path_from_url(database_url: str) -> Path | None:
 
 
 def _resolve_default_web_auth_db_url() -> str:
-    default_path = (
-        DOCKER_WEB_AUTH_DB_PATH
-        if _is_running_in_container()
-        else (SERVER_DIR.parent.parent / ".web_auth.db")
-    ).resolve()
+    if _is_running_in_container():
+        return f"sqlite+aiosqlite:///{DOCKER_WEB_AUTH_DB_PATH.as_posix()}"
+
+    default_path = (SERVER_DIR.parent.parent / ".web_auth.db").resolve()
     return f"sqlite+aiosqlite:///{default_path}"
 
 
@@ -91,6 +90,21 @@ def _resolve_web_auth_database_url() -> str:
     configured = getenv("WEB_AUTH_DATABASE_URL")
     if configured is None:
         return _resolve_default_web_auth_db_url()
+
+    if _is_running_in_container():
+        prefixes = ("sqlite+aiosqlite:///", "sqlite:///")
+        for prefix in prefixes:
+            if not configured.startswith(prefix):
+                continue
+
+            raw_path = unquote(configured[len(prefix) :])
+            if raw_path in {"", ":memory:"}:
+                return configured
+
+            posix_path = PurePosixPath(raw_path)
+            if not posix_path.is_absolute():
+                posix_path = PurePosixPath(DOCKER_WEB_AUTH_DB_PATH.parent.as_posix()) / posix_path
+            return f"{prefix}{posix_path}"
 
     resolved_path = resolve_sqlite_path_from_url(configured)
     if resolved_path is None:
