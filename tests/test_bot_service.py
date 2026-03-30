@@ -76,6 +76,37 @@ def test_ask_api_client_raises_unauthorized(monkeypatch, tmp_path):
         asyncio.run(database.engine.dispose())
 
 
+def test_ask_api_client_extracts_service_error_details(monkeypatch, tmp_path):
+    database, _, api_client, _, _ = _load_bot_modules(monkeypatch, tmp_path)
+
+    async def scenario():
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                503,
+                json={
+                    "error": "Vector index is empty. Run indexing first.",
+                    "code": "vector_index_empty",
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            client = api_client.AskAPIClient(base_url="http://test", client=http_client)
+            try:
+                await client.ask("question")
+            except api_client.AskAPIUnavailableError as exc:
+                assert exc.status_code == 503
+                assert exc.error_code == "vector_index_empty"
+                assert exc.server_message == "Vector index is empty. Run indexing first."
+                return
+        raise AssertionError("AskAPIUnavailableError was not raised")
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
+
+
 def test_process_text_question_saves_history_and_sends_reply(monkeypatch, tmp_path):
     database, _, api_client, service, models = _load_bot_modules(monkeypatch, tmp_path)
 
@@ -204,6 +235,53 @@ def test_process_text_question_handles_api_unavailable(monkeypatch, tmp_path, ca
         asyncio.run(database.engine.dispose())
 
     assert "API unavailable while processing question" in caplog.text
+
+
+def test_process_text_question_handles_empty_index_without_stacktrace(
+    monkeypatch, tmp_path, caplog
+):
+    database, _, _, service, models = _load_bot_modules(monkeypatch, tmp_path)
+    service.logger.propagate = True
+
+    class _UnavailableAPIClient:
+        async def ask(self, question: str):
+            raise service.AskAPIUnavailableError(
+                "API is unavailable",
+                status_code=503,
+                error_code="vector_index_empty",
+                server_message="Vector index is empty. Run indexing first.",
+            )
+
+    async def scenario():
+        await database.init_db()
+        sent_messages: list[str] = []
+
+        async def send_reply(text: str) -> None:
+            sent_messages.append(text)
+
+        await service.process_text_question(
+            telegram_id=304,
+            username="student",
+            question="Когда будет ответ?",
+            send_reply=send_reply,
+            api_client=_UnavailableAPIClient(),
+        )
+
+        async with database.async_session_factory() as session:
+            stored_request = await session.scalar(select(models.Request))
+
+        assert stored_request is not None
+        assert stored_request.ai_response == service.EMPTY_INDEX_REPLY_TEXT
+        assert sent_messages == [service.EMPTY_INDEX_REPLY_TEXT]
+
+    try:
+        with caplog.at_level("WARNING", logger="bot.service"):
+            asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
+
+    assert "API unavailable while processing question" in caplog.text
+    assert "Traceback" not in caplog.text
 
 
 def test_process_text_question_handles_api_unauthorized(monkeypatch, tmp_path, caplog):

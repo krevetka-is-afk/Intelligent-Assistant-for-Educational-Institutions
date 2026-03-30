@@ -42,6 +42,8 @@
 | `RAG_TOP_K` | `server` | Сколько чанков доставать из Chroma |
 | `RAG_TOTAL_TIMEOUT_SECONDS` | `server` | Общий бюджет времени RAG |
 | `LLM_TIMEOUT_SECONDS` | `server` | Таймаут вызова LLM |
+| `PREPARE_RAG_ON_STARTUP` | `server` | Подготавливать ли embeddings/vector store до ready-состояния сервиса |
+| `AUTO_INDEX_ON_STARTUP` | `server` | Автоматически индексировать `DOCUMENTS_DIR`, если vector store пуст на старте |
 
 `RAG_API_URL` оставлен только как legacy-алиас для Telegram-слоя и больше не является основной настройкой.
 

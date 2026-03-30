@@ -27,6 +27,8 @@ TIMEOUT_REPLY_TEXT = (
 UNAVAILABLE_REPLY_TEXT = "Сервис ответов сейчас недоступен. Попробуйте позже."
 UNAUTHORIZED_REPLY_TEXT = "Сервис ответов отклонил запрос. Проверьте конфигурацию доступа."
 INVALID_RESPONSE_REPLY_TEXT = "Не удалось обработать ответ сервиса. Попробуйте позже."
+EMPTY_INDEX_REPLY_TEXT = "База знаний пока не подготовлена. \
+        Обратитесь к администратору и запустите индексацию документов."
 TELEGRAM_MESSAGE_LIMIT = 4096
 TELEGRAM_WEB_CONTINUATION_NOTICE = "Далее в веб-интерфейсе."
 
@@ -154,6 +156,12 @@ async def _send_reply_chunks(send_reply: ReplySender, reply_text: str) -> None:
         await send_reply(chunk)
 
 
+def _reply_for_api_unavailable(error: AskAPIUnavailableError) -> str:
+    if error.error_code == "vector_index_empty":
+        return EMPTY_INDEX_REPLY_TEXT
+    return UNAVAILABLE_REPLY_TEXT
+
+
 async def process_question(
     telegram_id: int,
     username: str | None,
@@ -207,18 +215,20 @@ async def process_question(
         )
         reply_text = UNAUTHORIZED_REPLY_TEXT
         metadata = {}
-    except AskAPIUnavailableError:
-        logger.error(
-            "API unavailable while processing question for telegram_id=%s",
-            telegram_id,
-            extra=log_extra(
+    except AskAPIUnavailableError as exc:
+        log_message = "API unavailable while processing question for telegram_id=%s"
+        log_kwargs = {
+            "extra": log_extra(
                 telegram_id=str(telegram_id),
                 stage="network",
-                error_type="AskAPIUnavailableError",
-            ),
-            exc_info=True,
-        )
-        reply_text = UNAVAILABLE_REPLY_TEXT
+                error_type=exc.error_code or "AskAPIUnavailableError",
+            )
+        }
+        if exc.error_code == "vector_index_empty":
+            logger.warning(log_message, telegram_id, **log_kwargs)
+        else:
+            logger.error(log_message, telegram_id, exc_info=True, **log_kwargs)
+        reply_text = _reply_for_api_unavailable(exc)
         metadata = {}
     except AskAPIResponseError:
         logger.error(

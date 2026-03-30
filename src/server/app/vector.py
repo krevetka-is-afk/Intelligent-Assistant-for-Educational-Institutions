@@ -54,16 +54,27 @@ def get_vector_store() -> Chroma:
     return _vector_store
 
 
-def _ensure_index_ready(vector_store: Chroma) -> None:
+def get_vector_store_document_count(vector_store: Chroma | None = None) -> int:
+    resolved_store = vector_store or get_vector_store()
     try:
-        count = vector_store._collection.count()
+        count = resolved_store._collection.count()
     except Exception as exc:
         raise VectorStoreUnavailableError("Could not access vector store collection") from exc
+    return int(count)
 
+
+def _ensure_index_ready(vector_store: Chroma) -> int:
+    count = get_vector_store_document_count(vector_store)
     if count == 0:
         raise EmptyVectorStoreError(
             "Vector index is empty. Run `python -m src.server.app.index_documents --rebuild` first."
         )
+    return count
+
+
+def ensure_vector_store_ready() -> int:
+    vector_store = get_vector_store()
+    return _ensure_index_ready(vector_store)
 
 
 def similarity_search(question: str, *, k: int | None = None) -> list[RetrievedDocument]:

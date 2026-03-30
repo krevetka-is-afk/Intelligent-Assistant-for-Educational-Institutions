@@ -5,6 +5,8 @@ from starlette.testclient import TestClient
 
 os.environ["API_KEY"] = "test-api-key"
 os.environ["WEB_UI_PASSWORD"] = "test-web-password"
+os.environ["PREPARE_RAG_ON_STARTUP"] = "0"
+os.environ["AUTO_INDEX_ON_STARTUP"] = "0"
 
 from src.server.app.main import app  # noqa: E402
 

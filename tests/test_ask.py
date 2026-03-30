@@ -94,7 +94,10 @@ def test_ask_returns_503_for_empty_index(client, monkeypatch):
     )
 
     assert response.status_code == 503
-    assert response.json() == {"error": "Vector index is empty. Run indexing first."}
+    assert response.json() == {
+        "error": "Vector index is empty. Run indexing first.",
+        "code": "vector_index_empty",
+    }
 
 
 def test_ask_returns_401_without_api_key(client):

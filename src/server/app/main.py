@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hmac
 import json
 import logging
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,6 +21,7 @@ from slowapi.util import get_remote_address
 from app_runtime import log_extra, setup_logging
 
 from . import config
+from .document_ingestion import IndexingSummary, index_directory
 from .metrics import (
     rag_errors_total,
     rag_fallback_total,
@@ -29,7 +32,12 @@ from .metrics import (
     render_metrics,
 )
 from .rag import ask_question
-from .vector import EmptyVectorStoreError, VectorStoreUnavailableError
+from .vector import (
+    EmptyVectorStoreError,
+    VectorStoreUnavailableError,
+    clear_vector_cache,
+    ensure_vector_store_ready,
+)
 
 setup_logging("server")
 logger = logging.getLogger("server")
@@ -46,7 +54,62 @@ except RuntimeError as exc:
 
 limiter = Limiter(key_func=get_remote_address)
 
-app = FastAPI()
+
+def _prepare_rag_runtime() -> None:
+    if not config.PREPARE_RAG_ON_STARTUP:
+        logger.info("Skipping RAG startup preparation", extra=log_extra(stage="startup"))
+        return
+
+    logger.info("Preparing RAG runtime", extra=log_extra(stage="startup"))
+    try:
+        chunk_count = ensure_vector_store_ready()
+    except EmptyVectorStoreError:
+        if not config.AUTO_INDEX_ON_STARTUP:
+            raise
+
+        logger.warning(
+            "Vector store is empty on startup; indexing source documents",
+            extra=log_extra(stage="startup", error_type="vector_index_empty"),
+        )
+        clear_vector_cache()
+        summary = index_directory(
+            config.DOCUMENTS_DIR,
+            config.VECTOR_DB_DIR,
+            rebuild=False,
+        )
+        _log_startup_indexing_summary(summary)
+        clear_vector_cache()
+        chunk_count = ensure_vector_store_ready()
+
+    logger.info(
+        "RAG runtime ready with %s indexed chunks",
+        chunk_count,
+        extra=log_extra(stage="startup"),
+    )
+
+
+def _log_startup_indexing_summary(summary: IndexingSummary) -> None:
+    logger.info(
+        (
+            "Startup indexing finished: files_seen=%s indexed_files=%s "
+            "skipped_files=%s failed_files=%s chunks_written=%s"
+        ),
+        summary.files_seen,
+        summary.indexed_files,
+        summary.skipped_files,
+        summary.failed_files,
+        summary.chunks_written,
+        extra=log_extra(stage="startup"),
+    )
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await asyncio.to_thread(_prepare_rag_runtime)
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -68,8 +131,11 @@ app.add_middleware(
 )
 
 
-def _error_response(message: str, status_code: int) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"error": message})
+def _error_response(message: str, status_code: int, *, code: str | None = None) -> JSONResponse:
+    content: dict[str, str] = {"error": message}
+    if code is not None:
+        content["code"] = code
+    return JSONResponse(status_code=status_code, content=content)
 
 
 class UnauthorizedAPIKeyError(RuntimeError):
@@ -328,7 +394,7 @@ async def _process_question(
                 error_type=type(exc).__name__,
             ),
         )
-        return _error_response(str(exc), 503)
+        return _error_response(str(exc), 503, code="vector_index_empty")
     except VectorStoreUnavailableError:
         rag_errors_total.labels(stage="vector_store").inc()
         logger.exception(
@@ -340,7 +406,11 @@ async def _process_question(
                 error_type="VectorStoreUnavailableError",
             ),
         )
-        return _error_response("Vector store is unavailable. Please try again later.", 503)
+        return _error_response(
+            "Vector store is unavailable. Please try again later.",
+            503,
+            code="vector_store_unavailable",
+        )
     except Exception:
         rag_errors_total.labels(stage="unexpected").inc()
         logger.exception(

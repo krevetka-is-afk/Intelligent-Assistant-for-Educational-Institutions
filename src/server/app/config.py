@@ -28,6 +28,13 @@ def _is_running_in_container() -> bool:
     return Path("/.dockerenv").exists()
 
 
+def _get_bool_env(name: str, default: bool) -> bool:
+    raw = getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _resolve_vector_db_dir() -> Path:
     configured = getenv("VECTOR_DB_DIR")
     if configured is None:
@@ -55,7 +62,6 @@ DEFAULT_DOCUMENTS_DIR = _resolve_default_documents_dir()
 
 API_KEY = getenv("API_KEY")
 WEB_UI_PASSWORD = getenv("WEB_UI_PASSWORD")
-WEB_UI_PASSWORD = getenv("WEB_UI_PASSWORD")
 APP_ENV = getenv("APP_ENV", "development") or "development"
 LOG_LEVEL = getenv("LOG_LEVEL", "INFO") or "INFO"
 OLLAMA_HOST = (getenv("OLLAMA_HOST", "http://localhost:11434") or "http://localhost:11434").rstrip(
@@ -73,6 +79,8 @@ RAG_TOTAL_TIMEOUT_SECONDS = float(getenv("RAG_TOTAL_TIMEOUT_SECONDS", "20") or "
 LLM_TIMEOUT_SECONDS = float(getenv("LLM_TIMEOUT_SECONDS", "18") or "18")
 CHUNK_SIZE = int(getenv("RAG_CHUNK_SIZE", "500") or "500")
 CHUNK_OVERLAP = int(getenv("RAG_CHUNK_OVERLAP", "100") or "100")
+PREPARE_RAG_ON_STARTUP = _get_bool_env("PREPARE_RAG_ON_STARTUP", True)
+AUTO_INDEX_ON_STARTUP = _get_bool_env("AUTO_INDEX_ON_STARTUP", True)
 
 LLM_PROMPT_TEMPLATE = """
 Ты отвечаешь на вопросы студентов и сотрудников по документам учебного процесса.

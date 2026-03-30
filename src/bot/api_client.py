@@ -45,6 +45,19 @@ class AskAPITimeoutError(AskAPIError):
 class AskAPIUnavailableError(AskAPIError):
     """Raised when /ask is unreachable or returns 5xx."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        error_code: str | None = None,
+        server_message: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.error_code = error_code
+        self.server_message = server_message
+
 
 class AskAPIUnauthorizedError(AskAPIError):
     """Raised when /ask rejects the configured API key."""
@@ -112,6 +125,7 @@ class AskAPIClient:
             )
             raise AskAPIUnauthorizedError("API rejected the configured API key")
         if response.status_code >= 500:
+            error_message, error_code = self._extract_error_details(response)
             logger.error(
                 "API %s returned %s: %s",
                 self.api_url,
@@ -123,7 +137,12 @@ class AskAPIClient:
                     error_type=f"http_{response.status_code}",
                 ),
             )
-            raise AskAPIUnavailableError("API is unavailable")
+            raise AskAPIUnavailableError(
+                "API is unavailable",
+                status_code=response.status_code,
+                error_code=error_code,
+                server_message=error_message,
+            )
         if response.status_code >= 400:
             logger.error(
                 "API %s returned %s: %s",
@@ -199,3 +218,18 @@ class AskAPIClient:
         if self.api_key:
             headers["X-API-Key"] = self.api_key
         return headers
+
+    @staticmethod
+    def _extract_error_details(response: httpx.Response) -> tuple[str | None, str | None]:
+        try:
+            payload = response.json()
+        except ValueError:
+            return None, None
+
+        error_message = payload.get("error")
+        error_code = payload.get("code")
+        if not isinstance(error_message, str):
+            error_message = None
+        if not isinstance(error_code, str):
+            error_code = None
+        return error_message, error_code
