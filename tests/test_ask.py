@@ -100,7 +100,7 @@ async def _raise_empty_index(question: str) -> RAGResponse:
     raise EmptyVectorStoreError("Vector index is empty. Run indexing first.")
 
 
-def test_ask_returns_503_for_empty_index(client, monkeypatch):
+def test_ask_returns_503_for_empty_index(client, auth_headers, monkeypatch):
     monkeypatch.setattr("src.server.app.main.ask_question", _raise_empty_index)
 
     response = client.post(

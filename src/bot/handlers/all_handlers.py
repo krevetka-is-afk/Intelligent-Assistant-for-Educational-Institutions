@@ -1,3 +1,4 @@
+import asyncio
 import html
 import logging
 
@@ -76,9 +77,10 @@ def format_answer(response: str, sources: list) -> list[str]:
         meta = s.get("metadata", {})
         title = meta.get("title") or meta.get("source", "Неизвестно")
         page = meta.get("page")
-        line = f"• {title}" + (f", стр. {page}" if page else "")
+        line = f"• {html.escape(str(title))}" + (f", стр. {html.escape(str(page))}" if page else "")
         sources_lines.append(line)
     sources_text = "\n".join(sources_lines)
+    response = html.escape(response)
 
     full = response + sources_text
     if len(full) <= TELEGRAM_LIMIT:

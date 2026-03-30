@@ -562,6 +562,15 @@
     </div>
     {% endif %}
     <div class="question-card">
+        <div class="api-key-row">
+            <label for="api-key-input">API Key</label>
+            <input
+                type="password"
+                id="api-key-input"
+                placeholder="Leave empty if not required"
+                autocomplete="off"
+            />
+        </div>
         <label for="question-input">Your question</label>
         <form id="ask-form" class="input-row">
             <input
@@ -610,6 +619,7 @@
     {% if authenticated %}
     const form = document.getElementById("ask-form");
     const input = document.getElementById("question-input");
+    const apiKeyInput = document.getElementById("api-key-input");
     const submitBtn = document.getElementById("submit-btn");
     const answerSection = document.getElementById("answer-section");
     const answerText = document.getElementById("answer-text");
@@ -652,9 +662,7 @@
         try {
             const res = await fetch("/web/ask", {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
+                headers,
                 body: JSON.stringify({ question }),
             });
 

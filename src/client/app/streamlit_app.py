@@ -143,11 +143,13 @@ def get_response(promt: str):
         headers["X-API-Key"] = API_KEY
 
     try:
+        headers = {"X-API-Key": API_KEY} if API_KEY else {}
         response = requests.post(
             url=API_URL,
             json={"question": question},
             headers=headers,
             timeout=90,
+            headers=headers,
         )
         logger.debug(
             "Server responded with status code %s",

@@ -76,6 +76,16 @@ def validate_pdf_size(file_size: int, *, max_size: int = MAX_PDF_SIZE_BYTES) -> 
 def _to_pil_image(image_np: Any) -> Image.Image:
     if isinstance(image_np, Image.Image):
         image = image_np
+    elif isinstance(image_np, (bytes, bytearray)):
+        try:
+            image = Image.open(io.BytesIO(image_np))
+        except Exception as exc:
+            raise MediaProcessingError("Could not convert image payload for OCR.") from exc
+    elif hasattr(image_np, "read"):
+        try:
+            image = Image.open(image_np)
+        except Exception as exc:
+            raise MediaProcessingError("Could not convert image payload for OCR.") from exc
     else:
         try:
             image = Image.fromarray(image_np)
