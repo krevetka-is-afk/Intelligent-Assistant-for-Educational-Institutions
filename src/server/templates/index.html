@@ -248,14 +248,42 @@
             line-height: 1.6;
         }
 
-        .auth-form {
+        .auth-layout {
+            display: grid;
+            gap: 1rem;
             margin-top: 1rem;
-            display: flex;
+        }
+
+        .auth-panel {
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 1rem;
+            background: #f9fafb;
+        }
+
+        .auth-panel h3 {
+            font-size: 0.95rem;
+            margin-bottom: 0.5rem;
+            color: #0f3460;
+        }
+
+        .auth-panel p {
+            margin-top: 0;
+            font-size: 0.9rem;
+        }
+
+        .auth-form,
+        .invite-form {
+            margin-top: 1rem;
+            display: grid;
             gap: 0.75rem;
         }
 
-        .auth-form input[type="password"] {
-            flex: 1;
+        .auth-form input[type="password"],
+        .auth-form input[type="text"],
+        .auth-form input[type="number"],
+        .invite-form input[type="text"],
+        .invite-form input[type="number"] {
             padding: 0.75rem 1rem;
             border: 1.5px solid #d1d5db;
             border-radius: 8px;
@@ -264,6 +292,7 @@
         }
 
         .auth-form button,
+        .invite-form button,
         .logout-form button {
             padding: 0.75rem 1.25rem;
             background: #0f3460;
@@ -275,8 +304,46 @@
             cursor: pointer;
         }
 
-        .logout-form {
+        .session-banner {
             margin-bottom: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .session-banner p {
+            color: #374151;
+            font-size: 0.9rem;
+        }
+
+        .success-msg {
+            background: #ecfdf5;
+            color: #065f46;
+            border: 1px solid #a7f3d0;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+        }
+
+        .invite-code-card {
+            margin-top: 1rem;
+            padding: 1rem;
+            border-radius: 10px;
+            background: #111827;
+            color: #f9fafb;
+        }
+
+        .invite-code-card code {
+            display: block;
+            margin-top: 0.5rem;
+            font-size: 1rem;
+            word-break: break-all;
+        }
+
+        .logout-form {
             display: flex;
             justify-content: flex-end;
         }
@@ -340,27 +407,144 @@
     {% if not authenticated %}
     <div class="auth-card">
         <h2>Web Access</h2>
-        <p>Для работы с веб-интерфейсом введите отдельный web-пароль. После входа сервер создаст HttpOnly-сессию и браузер сможет вызывать защищенный `/web/ask` без раскрытия backend-секретов в JavaScript.</p>
+        <p>Веб-доступ теперь работает через bootstrap-admin, обычных web-пользователей и одноразовые invite-коды. Backend `API_KEY` в браузер не передается.</p>
         {% if error_message %}
         <div class="error-msg visible">{{ error_message }}</div>
         {% endif %}
-        {% if web_login_enabled %}
-        <form class="auth-form" method="post" action="/web/login">
-            <input
-                type="password"
-                name="web_password"
-                placeholder="Web password"
-                autocomplete="current-password"
-                required
-            />
-            <button type="submit">Sign in</button>
-        </form>
+        {% if success_message %}
+        <div class="success-msg">{{ success_message }}</div>
         {% endif %}
+
+        <div class="auth-layout">
+        {% if not admin_exists %}
+            <div class="auth-panel">
+                <h3>Bootstrap Admin</h3>
+                {% if bootstrap_enabled %}
+                <p>Первый администратор создается через bootstrap token, который выдает оператор сервера.</p>
+                <form class="auth-form" method="post" action="/web/bootstrap">
+                    <input
+                        type="text"
+                        name="bootstrap_token"
+                        placeholder="Bootstrap token"
+                        autocomplete="one-time-code"
+                        required
+                    />
+                    <input
+                        type="text"
+                        name="username"
+                        placeholder="Admin username"
+                        autocomplete="username"
+                        required
+                    />
+                    <input
+                        type="password"
+                        name="password"
+                        placeholder="Admin password"
+                        autocomplete="new-password"
+                        required
+                    />
+                    <button type="submit">Create admin</button>
+                </form>
+                {% else %}
+                <p>Bootstrap еще не включен. Администратор сервера должен задать `WEB_BOOTSTRAP_ADMIN_TOKEN`.</p>
+                {% endif %}
+            </div>
+        {% else %}
+            <div class="auth-panel">
+                <h3>Sign In</h3>
+                <p>Используйте выданные web-учетные данные.</p>
+                <form class="auth-form" method="post" action="/web/login">
+                    <input
+                        type="text"
+                        name="username"
+                        placeholder="Username"
+                        autocomplete="username"
+                        required
+                    />
+                    <input
+                        type="password"
+                        name="password"
+                        placeholder="Password"
+                        autocomplete="current-password"
+                        required
+                    />
+                    <button type="submit">Sign in</button>
+                </form>
+            </div>
+
+            <div class="auth-panel">
+                <h3>Activate Invite</h3>
+                <p>Если вам выдали invite-код, активируйте его и сразу создайте собственную web-учетную запись.</p>
+                <form class="auth-form" method="post" action="/web/invite/accept">
+                    <input
+                        type="text"
+                        name="invite_code"
+                        placeholder="Invite code"
+                        autocomplete="one-time-code"
+                        required
+                    />
+                    <input
+                        type="text"
+                        name="username"
+                        placeholder="New username"
+                        autocomplete="username"
+                        required
+                    />
+                    <input
+                        type="password"
+                        name="password"
+                        placeholder="New password"
+                        autocomplete="new-password"
+                        required
+                    />
+                    <button type="submit">Activate access</button>
+                </form>
+            </div>
+        {% endif %}
+        </div>
     </div>
     {% else %}
-    <form class="logout-form" method="post" action="/web/logout">
-        <button type="submit">Sign out</button>
-    </form>
+    <div class="session-banner">
+        <p>Signed in as <strong>{{ current_user.username }}</strong>{% if is_admin %} (admin){% endif %}</p>
+        <form class="logout-form" method="post" action="/web/logout">
+            <button type="submit">Sign out</button>
+        </form>
+    </div>
+    {% if error_message %}
+    <div class="error-msg visible">{{ error_message }}</div>
+    {% endif %}
+    {% if success_message %}
+    <div class="success-msg">{{ success_message }}</div>
+    {% endif %}
+    {% if is_admin %}
+    <div class="auth-card" style="margin-bottom: 1.5rem;">
+        <h2>Invite Users</h2>
+        <p>Создавайте одноразовые invite-коды для новых web-пользователей.</p>
+        <form class="invite-form" method="post" action="/web/admin/invites">
+            <input
+                type="text"
+                name="recipient_label"
+                placeholder="Кому выдается код, например ivan.petrov"
+                autocomplete="off"
+            />
+            <input
+                type="number"
+                name="expires_in_hours"
+                min="1"
+                max="720"
+                value="72"
+                required
+            />
+            <button type="submit">Create invite code</button>
+        </form>
+        {% if invite_code %}
+        <div class="invite-code-card">
+            <strong>One-time invite code</strong>
+            <code id="invite-code">{{ invite_code }}</code>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
     <div class="question-card">
         <label for="question-input">Your question</label>
         <form id="ask-form" class="input-row">

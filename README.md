@@ -12,7 +12,7 @@
 ## Что реализовано
 
 - `POST /ask` защищён заголовком `X-API-Key`
-- браузерный `/web` требует отдельный `WEB_UI_PASSWORD`, после чего использует HttpOnly-сессию для `POST /web/ask` без раскрытия backend `API_KEY` в JavaScript
+- браузерный `/web` работает через bootstrap-admin, обычных web-пользователей и одноразовые invite-коды, а `POST /web/ask` использует HttpOnly-сессию без раскрытия backend `API_KEY` в JavaScript
 - FastAPI, Streamlit и Telegram-бот используют единый env-контракт и структурированное логирование
 - `docker-compose.yaml` поднимает `db`, `server`, `bot`, `client` с healthcheck и `restart: unless-stopped`
 - при сбоях LLM RAG возвращает fallback-ответ и логирует причину на уровне `ERROR`
@@ -26,7 +26,8 @@
 | `APP_ENV` | `server`, `bot`, `client` | Имя окружения для логов |
 | `LOG_LEVEL` | `server`, `bot`, `client` | Уровень логирования |
 | `API_KEY` | `server`, `bot`, `client` | Shared secret для `X-API-Key` |
-| `WEB_UI_PASSWORD` | `server` | Отдельный пароль входа для встроенного `/web` |
+| `WEB_BOOTSTRAP_ADMIN_TOKEN` | `server` | Bootstrap token для создания первого web-admin |
+| `WEB_AUTH_DATABASE_URL` | `server` | SQLAlchemy URL хранилища web users, invite-кодов и web-сессий. Если не задан, локально используется `./.web_auth.db`, а в контейнере `/data/web_auth.db` |
 | `API_BASE_URL` | `bot`, `client` | Базовый URL FastAPI |
 | `BOT_TOKEN` | `bot` | Telegram bot token |
 | `DATABASE_URL` | `bot` | SQLAlchemy URL для истории запросов |
@@ -71,12 +72,21 @@ cp .env.example .env
 APP_ENV=development
 LOG_LEVEL=INFO
 API_KEY=change-me
-WEB_UI_PASSWORD=change-me-web
+WEB_BOOTSTRAP_ADMIN_TOKEN=change-me-bootstrap-token
 API_BASE_URL=http://localhost:8000
 BOT_TOKEN=replace-with-real-token
 DATABASE_URL=sqlite+aiosqlite:///./bot.db
 OLLAMA_HOST=http://localhost:11434
 ```
+
+`WEB_AUTH_DATABASE_URL` можно не задавать: сервер сам выберет подходящий путь для локального запуска и контейнера.
+
+Первый вход в `/web` делается через bootstrap token:
+
+1. оператор сервера задаёт `WEB_BOOTSTRAP_ADMIN_TOKEN`
+2. первый администратор открывает `/web` и создаёт admin-учётную запись
+3. администратор выпускает одноразовые invite-коды для обычных web-пользователей
+4. пользователь активирует invite-код и создаёт собственные login/password
 
 ### 3. Индексация документов
 
@@ -102,8 +112,12 @@ uv run uvicorn src.server.app.main:app --reload
 - `GET /health`
 - `GET /metrics` c `X-API-Key`
 - `GET /web`
+- `POST /web/bootstrap`
+- `POST /web/login`
+- `POST /web/invite/accept`
+- `POST /web/admin/invites`
 - `POST /ask` c `X-API-Key`
-- `POST /web/ask` c `X-API-Key` или серверной web-сессией после входа через `WEB_UI_PASSWORD`
+- `POST /web/ask` c `X-API-Key` или серверной web-сессией после bootstrap/login/invite activation
 
 Пример защищённого запроса:
 

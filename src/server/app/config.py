@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import unquote
 
 from app_runtime import getenv
 
 SERVER_DIR = Path(__file__).resolve().parents[1]
 DOCKER_VECTOR_DB_DIR = Path("/data")
 DOCKER_DOCUMENTS_DIR = Path("/data_and_documents")
+DOCKER_WEB_AUTH_DB_PATH = Path("/data/web_auth.db")
 
 
 def _resolve_default_documents_dir() -> Path:
@@ -57,11 +59,51 @@ def _resolve_documents_dir() -> Path:
     return candidate.resolve()
 
 
+def resolve_sqlite_path_from_url(database_url: str) -> Path | None:
+    prefixes = ("sqlite+aiosqlite:///", "sqlite:///")
+    for prefix in prefixes:
+        if not database_url.startswith(prefix):
+            continue
+
+        raw_path = unquote(database_url[len(prefix) :])
+        if raw_path in {"", ":memory:"}:
+            return None
+
+        candidate = Path(raw_path).expanduser()
+        if candidate.is_absolute():
+            return candidate.resolve()
+
+        base_dir = DOCKER_VECTOR_DB_DIR if _is_running_in_container() else Path.cwd().resolve()
+        return (base_dir / candidate).resolve()
+    return None
+
+
+def _resolve_default_web_auth_db_url() -> str:
+    default_path = (
+        DOCKER_WEB_AUTH_DB_PATH
+        if _is_running_in_container()
+        else (SERVER_DIR.parent.parent / ".web_auth.db")
+    ).resolve()
+    return f"sqlite+aiosqlite:///{default_path}"
+
+
+def _resolve_web_auth_database_url() -> str:
+    configured = getenv("WEB_AUTH_DATABASE_URL")
+    if configured is None:
+        return _resolve_default_web_auth_db_url()
+
+    resolved_path = resolve_sqlite_path_from_url(configured)
+    if resolved_path is None:
+        return configured
+    return f"sqlite+aiosqlite:///{resolved_path}"
+
+
 DEFAULT_VECTOR_DB_DIR = SERVER_DIR / "chrome_langchain_db"
 DEFAULT_DOCUMENTS_DIR = _resolve_default_documents_dir()
 
 API_KEY = getenv("API_KEY")
-WEB_UI_PASSWORD = getenv("WEB_UI_PASSWORD")
+WEB_BOOTSTRAP_ADMIN_TOKEN = getenv("WEB_BOOTSTRAP_ADMIN_TOKEN")
+WEB_AUTH_DATABASE_URL = _resolve_web_auth_database_url()
 APP_ENV = getenv("APP_ENV", "development") or "development"
 LOG_LEVEL = getenv("LOG_LEVEL", "INFO") or "INFO"
 OLLAMA_HOST = (getenv("OLLAMA_HOST", "http://localhost:11434") or "http://localhost:11434").rstrip(

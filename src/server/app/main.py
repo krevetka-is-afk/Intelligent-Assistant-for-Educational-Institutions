@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import hmac
 import json
 import logging
-import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -21,6 +19,23 @@ from slowapi.util import get_remote_address
 from app_runtime import log_extra, setup_logging
 
 from . import config
+from .auth_crud import (
+    BootstrapAlreadyConfiguredError,
+    ExpiredInviteError,
+    InvalidCredentialsError,
+    InvalidInviteError,
+    UsernameAlreadyExistsError,
+    accept_invite,
+    authenticate_user,
+    create_bootstrap_admin,
+    create_invite,
+    create_web_session,
+    get_user_by_session_token,
+    has_admin_user,
+    revoke_session,
+)
+from .auth_database import dispose_auth_db, init_auth_db
+from .auth_models import WebUser
 from .document_ingestion import IndexingSummary, index_directory
 from .metrics import (
     rag_errors_total,
@@ -105,8 +120,12 @@ def _log_startup_indexing_summary(summary: IndexingSummary) -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    await init_auth_db()
     await asyncio.to_thread(_prepare_rag_runtime)
-    yield
+    try:
+        yield
+    finally:
+        await dispose_auth_db()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -174,17 +193,8 @@ async def metrics(x_api_key: str | None = Header(default=None, alias="X-API-Key"
 async def web_interface(
     request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")
 ):
-    authenticated = _has_valid_web_session(request)
-    response = templates.TemplateResponse(
-        request,
-        "index.html",
-        {
-            "authenticated": authenticated,
-            "error_message": None,
-            "web_login_enabled": config.WEB_UI_PASSWORD is not None,
-        },
-    )
-    return response
+    del x_api_key
+    return await _render_web_page(request)
 
 
 async def verify_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
@@ -200,63 +210,55 @@ def _is_valid_api_key(candidate: str | None) -> bool:
     return candidate is not None and hmac.compare_digest(candidate, config.API_KEY or "")
 
 
-def _is_valid_web_password(candidate: str | None) -> bool:
+def _is_valid_bootstrap_token(candidate: str | None) -> bool:
     return (
         candidate is not None
-        and config.WEB_UI_PASSWORD is not None
-        and hmac.compare_digest(candidate, config.WEB_UI_PASSWORD)
+        and config.WEB_BOOTSTRAP_ADMIN_TOKEN is not None
+        and hmac.compare_digest(candidate, config.WEB_BOOTSTRAP_ADMIN_TOKEN)
     )
 
 
-def _build_web_session_signature(expires_at: int) -> str:
-    digest = hmac.new(
-        (config.WEB_UI_PASSWORD or "").encode("utf-8"),
-        str(expires_at).encode("utf-8"),
-        digestmod="sha256",
-    ).digest()
-    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+def _request_is_secure(request: Request) -> bool:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    if forwarded_proto:
+        scheme = forwarded_proto.split(",", maxsplit=1)[0].strip()
+        return scheme == "https"
+    return request.url.scheme == "https"
 
 
-def _build_web_session_cookie() -> str:
-    if config.WEB_UI_PASSWORD is None:
-        raise RuntimeError("WEB_UI_PASSWORD is not set")
-    expires_at = int(time.time()) + WEB_SESSION_MAX_AGE_SECONDS
-    signature = _build_web_session_signature(expires_at)
-    return f"{expires_at}.{signature}"
-
-
-def _has_valid_web_session(request: Request) -> bool:
-    if config.WEB_UI_PASSWORD is None:
-        return False
-
+def _get_web_session_token(request: Request) -> str | None:
     token = request.cookies.get(WEB_SESSION_COOKIE_NAME)
+    if token:
+        return token
+    return None
+
+
+async def _get_current_web_user(request: Request) -> WebUser | None:
+    if hasattr(request.state, "web_user_resolved"):
+        return request.state.web_user
+
+    token = _get_web_session_token(request)
     if not token:
-        return False
+        request.state.web_user = None
+        request.state.web_user_resolved = True
+        return None
 
-    expires_at_text, _, signature = token.partition(".")
-    if not expires_at_text or not signature:
-        return False
-
-    try:
-        expires_at = int(expires_at_text)
-    except ValueError:
-        return False
-
-    if expires_at <= int(time.time()):
-        return False
-
-    expected_signature = _build_web_session_signature(expires_at)
-    return hmac.compare_digest(signature, expected_signature)
+    user = await get_user_by_session_token(token)
+    request.state.web_user = user
+    request.state.web_user_resolved = True
+    if user is None:
+        request.state.clear_web_session_cookie = True
+    return user
 
 
-def _set_web_session_cookie(response: Response, request: Request) -> None:
+def _set_web_session_cookie(response: Response, request: Request, token: str) -> None:
     response.set_cookie(
         key=WEB_SESSION_COOKIE_NAME,
-        value=_build_web_session_cookie(),
+        value=token,
         max_age=WEB_SESSION_MAX_AGE_SECONDS,
         httponly=True,
         samesite="lax",
-        secure=request.url.scheme == "https",
+        secure=_request_is_secure(request),
     )
 
 
@@ -264,10 +266,43 @@ def _clear_web_session_cookie(response: Response) -> None:
     response.delete_cookie(WEB_SESSION_COOKIE_NAME)
 
 
+async def _render_web_page(
+    request: Request,
+    *,
+    error_message: str | None = None,
+    success_message: str | None = None,
+    invite_code: str | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    current_user = await _get_current_web_user(request)
+    admin_exists = await has_admin_user()
+    response = templates.TemplateResponse(
+        request,
+        "index.html",
+        {
+            "authenticated": current_user is not None,
+            "current_user": current_user,
+            "is_admin": bool(current_user and current_user.is_admin),
+            "admin_exists": admin_exists,
+            "bootstrap_enabled": config.WEB_BOOTSTRAP_ADMIN_TOKEN is not None,
+            "error_message": error_message,
+            "success_message": success_message,
+            "invite_code": invite_code,
+        },
+        status_code=status_code,
+    )
+    if getattr(request.state, "clear_web_session_cookie", False):
+        _clear_web_session_cookie(response)
+    return response
+
+
 async def verify_web_access(
     request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")
 ) -> None:
-    if _is_valid_api_key(x_api_key) or _has_valid_web_session(request):
+    if _is_valid_api_key(x_api_key):
+        return
+
+    if await _get_current_web_user(request) is not None:
         return
 
     logger.warning(
@@ -279,46 +314,196 @@ async def verify_web_access(
 
 @app.post("/web/login")
 @limiter.limit("5/minute")
-async def web_login(request: Request, web_password: str = Form(...)) -> Response:
-    if config.WEB_UI_PASSWORD is None:
+async def web_login(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+) -> Response:
+    if not await has_admin_user():
         logger.warning(
-            "Rejected web login because WEB_UI_PASSWORD is not configured",
-            extra=log_extra(endpoint="/web/login", error_type="web_auth_disabled"),
+            "Rejected web login because bootstrap is not completed",
+            extra=log_extra(endpoint="/web/login", error_type="bootstrap_required"),
         )
-        return templates.TemplateResponse(
+        return await _render_web_page(
             request,
-            "index.html",
-            {
-                "authenticated": False,
-                "error_message": "Веб-вход отключен. Установите WEB_UI_PASSWORD на сервере.",
-                "web_login_enabled": False,
-            },
+            error_message="Сначала нужно создать bootstrap-admin.",
             status_code=503,
         )
 
-    if not _is_valid_web_password(web_password):
+    try:
+        user = await authenticate_user(username, password)
+    except ValueError as exc:
+        logger.warning(
+            "Rejected invalid web login payload",
+            extra=log_extra(endpoint="/web/login", error_type="invalid_payload"),
+        )
+        return await _render_web_page(request, error_message=str(exc), status_code=400)
+    except InvalidCredentialsError:
         logger.warning(
             "Rejected unauthorized web login",
             extra=log_extra(endpoint="/web/login", error_type="unauthorized"),
         )
-        return templates.TemplateResponse(
+        return await _render_web_page(
             request,
-            "index.html",
-            {
-                "authenticated": False,
-                "error_message": "Неверный web-пароль.",
-                "web_login_enabled": True,
-            },
+            error_message="Неверное имя пользователя или пароль.",
             status_code=401,
         )
 
+    session_token = await create_web_session(
+        user_id=user.id,
+        user_agent=request.headers.get("user-agent"),
+    )
     response = RedirectResponse(url="/web", status_code=303)
-    _set_web_session_cookie(response, request)
+    _set_web_session_cookie(response, request, session_token)
     return response
 
 
+@app.post("/web/bootstrap")
+@limiter.limit("3/minute")
+async def web_bootstrap(
+    request: Request,
+    bootstrap_token: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(...),
+) -> Response:
+    if config.WEB_BOOTSTRAP_ADMIN_TOKEN is None:
+        logger.warning(
+            "Rejected bootstrap because bootstrap token is not configured",
+            extra=log_extra(endpoint="/web/bootstrap", error_type="bootstrap_disabled"),
+        )
+        return await _render_web_page(
+            request,
+            error_message="Bootstrap отключен. Установите WEB_BOOTSTRAP_ADMIN_TOKEN на сервере.",
+            status_code=503,
+        )
+
+    if not _is_valid_bootstrap_token(bootstrap_token):
+        logger.warning(
+            "Rejected bootstrap with invalid bootstrap token",
+            extra=log_extra(endpoint="/web/bootstrap", error_type="unauthorized"),
+        )
+        return await _render_web_page(
+            request,
+            error_message="Неверный bootstrap token.",
+            status_code=401,
+        )
+
+    try:
+        user = await create_bootstrap_admin(username, password)
+    except BootstrapAlreadyConfiguredError:
+        return await _render_web_page(
+            request,
+            error_message="Bootstrap уже завершен. Используйте обычный вход.",
+            status_code=409,
+        )
+    except UsernameAlreadyExistsError:
+        return await _render_web_page(
+            request,
+            error_message="Такое имя пользователя уже занято.",
+            status_code=409,
+        )
+    except ValueError as exc:
+        return await _render_web_page(request, error_message=str(exc), status_code=400)
+
+    session_token = await create_web_session(
+        user_id=user.id,
+        user_agent=request.headers.get("user-agent"),
+    )
+    response = RedirectResponse(url="/web", status_code=303)
+    _set_web_session_cookie(response, request, session_token)
+    return response
+
+
+@app.post("/web/invite/accept")
+@limiter.limit("5/minute")
+async def web_accept_invite(
+    request: Request,
+    invite_code: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(...),
+) -> Response:
+    try:
+        user = await accept_invite(invite_code, username, password)
+    except InvalidInviteError:
+        return await _render_web_page(
+            request,
+            error_message="Инвайт-код не найден.",
+            status_code=404,
+        )
+    except ExpiredInviteError:
+        return await _render_web_page(
+            request,
+            error_message="Инвайт-код просрочен или уже использован.",
+            status_code=410,
+        )
+    except UsernameAlreadyExistsError:
+        return await _render_web_page(
+            request,
+            error_message="Такое имя пользователя уже занято.",
+            status_code=409,
+        )
+    except ValueError as exc:
+        return await _render_web_page(request, error_message=str(exc), status_code=400)
+
+    session_token = await create_web_session(
+        user_id=user.id,
+        user_agent=request.headers.get("user-agent"),
+    )
+    response = RedirectResponse(url="/web", status_code=303)
+    _set_web_session_cookie(response, request, session_token)
+    return response
+
+
+@app.post("/web/admin/invites")
+@limiter.limit("10/minute")
+async def web_create_invite(
+    request: Request,
+    recipient_label: str = Form(default=""),
+    expires_in_hours: int = Form(default=72),
+) -> Response:
+    current_user = await _get_current_web_user(request)
+    if current_user is None:
+        logger.warning(
+            "Rejected unauthorized invite creation",
+            extra=log_extra(endpoint="/web/admin/invites", error_type="unauthorized"),
+        )
+        return await _render_web_page(
+            request,
+            error_message="Сначала войдите в web-интерфейс.",
+            status_code=401,
+        )
+    if not current_user.is_admin:
+        logger.warning(
+            "Rejected non-admin invite creation",
+            extra=log_extra(endpoint="/web/admin/invites", error_type="forbidden"),
+        )
+        return await _render_web_page(
+            request,
+            error_message="Только администратор может создавать инвайты.",
+            status_code=403,
+        )
+
+    try:
+        invite_code, _ = await create_invite(
+            created_by_user_id=current_user.id,
+            recipient_label=recipient_label,
+            expires_in_hours=expires_in_hours,
+        )
+    except ValueError as exc:
+        return await _render_web_page(request, error_message=str(exc), status_code=400)
+
+    return await _render_web_page(
+        request,
+        success_message=("Инвайт создан. Скопируйте код и передайте его пользователю."),
+        invite_code=invite_code,
+    )
+
+
 @app.post("/web/logout")
-async def web_logout() -> RedirectResponse:
+async def web_logout(request: Request) -> RedirectResponse:
+    token = _get_web_session_token(request)
+    if token:
+        await revoke_session(token)
     response = RedirectResponse(url="/web", status_code=303)
     _clear_web_session_cookie(response)
     return response
