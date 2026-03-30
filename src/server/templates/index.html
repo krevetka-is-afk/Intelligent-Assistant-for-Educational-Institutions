@@ -184,9 +184,25 @@
             line-height: 1.6;
         }
 
+        .source-title {
+            font-weight: 600;
+            color: #111827;
+        }
+
+        .source-excerpt {
+            margin-top: 0.45rem;
+            color: #374151;
+            white-space: pre-wrap;
+        }
+
         .source-item .source-meta {
             margin-top: 0.5rem;
             font-size: 0.75rem;
+            color: #6b7280;
+        }
+
+        .source-empty {
+            font-size: 0.875rem;
             color: #6b7280;
         }
 
@@ -568,12 +584,14 @@
             <div class="answer-text" id="answer-text"></div>
             <div class="meta-bar" id="meta-bar"></div>
 
+            {% if show_sources %}
             <div class="sources-section">
                 <button class="sources-toggle" id="sources-toggle" type="button">
                     Show sources
                 </button>
                 <div class="sources-list" id="sources-list"></div>
             </div>
+            {% endif %}
         </div>
     </div>
 
@@ -596,20 +614,23 @@
     const answerSection = document.getElementById("answer-section");
     const answerText = document.getElementById("answer-text");
     const metaBar = document.getElementById("meta-bar");
-    const sourcesList = document.getElementById("sources-list");
-    const sourcesToggle = document.getElementById("sources-toggle");
+    const showSourcesEnabled = {{ show_sources|tojson }};
+    const sourcesList = showSourcesEnabled ? document.getElementById("sources-list") : null;
+    const sourcesToggle = showSourcesEnabled ? document.getElementById("sources-toggle") : null;
     const errorMsg = document.getElementById("error-msg");
     const historySection = document.getElementById("history-section");
     const historyList = document.getElementById("history-list");
 
     const history = [];
 
-    sourcesToggle.addEventListener("click", () => {
-        sourcesList.classList.toggle("open");
-        sourcesToggle.textContent = sourcesList.classList.contains("open")
-            ? "Hide sources"
-            : "Show sources";
-    });
+    if (showSourcesEnabled) {
+        sourcesToggle.addEventListener("click", () => {
+            sourcesList.classList.toggle("open");
+            sourcesToggle.textContent = sourcesList.classList.contains("open")
+                ? "Hide sources"
+                : "Show sources";
+        });
+    }
 
     form.addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -619,8 +640,10 @@
         // Reset UI
         errorMsg.classList.remove("visible");
         answerSection.classList.remove("visible");
-        sourcesList.classList.remove("open");
-        sourcesToggle.textContent = "Show sources";
+        if (showSourcesEnabled) {
+            sourcesList.classList.remove("open");
+            sourcesToggle.textContent = "Show sources";
+        }
 
         // Loading state
         submitBtn.disabled = true;
@@ -656,7 +679,7 @@
             if (meta.embedding_model) {
                 metaBar.innerHTML += `<span>Embeddings: ${escapeHtml(meta.embedding_model)}</span>`;
             }
-            if (meta.num_sources !== undefined) {
+            if (showSourcesEnabled && meta.num_sources !== undefined) {
                 metaBar.innerHTML += `<span>Sources used: ${meta.num_sources}</span>`;
             }
             if (meta.confidence !== undefined) {
@@ -669,21 +692,31 @@
                 metaBar.innerHTML += `<span>Total: ${meta.total_time_ms} ms</span>`;
             }
 
-            // Sources
-            sourcesList.innerHTML = "";
-            const sources = data.sources || [];
-            sources.forEach((src, i) => {
-                const item = document.createElement("div");
-                item.className = "source-item";
-                item.innerHTML = `${escapeHtml(src.content)}`;
-                if (src.metadata && Object.keys(src.metadata).length > 0) {
-                    const metaStr = Object.entries(src.metadata)
-                        .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(String(v))}`)
-                        .join(" | ");
-                    item.innerHTML += `<div class="source-meta">${metaStr}</div>`;
+            if (showSourcesEnabled) {
+                // Sources
+                sourcesList.innerHTML = "";
+                const sources = data.sources || [];
+                if (sources.length === 0) {
+                    sourcesToggle.disabled = true;
+                    sourcesList.innerHTML = '<div class="source-empty">No sources were attached to this answer.</div>';
+                } else {
+                    sourcesToggle.disabled = false;
                 }
-                sourcesList.appendChild(item);
-            });
+                sources.forEach((src, i) => {
+                    const item = document.createElement("div");
+                    item.className = "source-item";
+                    const title = formatSourceTitle(src, i + 1);
+                    item.innerHTML = `
+                        <div class="source-title">${i + 1}. ${escapeHtml(title)}</div>
+                        <div class="source-excerpt">${escapeHtml(formatSourceExcerpt(src.content))}</div>
+                    `;
+                    const metaStr = formatSourceMeta(src.metadata, title);
+                    if (metaStr) {
+                        item.innerHTML += `<div class="source-meta">${metaStr}</div>`;
+                    }
+                    sourcesList.appendChild(item);
+                });
+            }
 
             answerSection.classList.add("visible");
 
@@ -708,6 +741,58 @@
         const div = document.createElement("div");
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    function humanizeSourceLabel(value) {
+        if (!value) return "";
+        let candidate = String(value).trim();
+        if (!candidate) return "";
+        candidate = candidate.replace(/\\/g, "/").split("/").pop() || candidate;
+        for (const extension of [".pdf", ".docx", ".txt", ".html", ".htm"]) {
+            if (candidate.toLowerCase().endsWith(extension)) {
+                candidate = candidate.slice(0, -extension.length);
+                break;
+            }
+        }
+        candidate = candidate.replace(/[-_\s]+/gu, " ").replace(/^[ ._-]+|[ ._-]+$/gu, "");
+        return candidate || String(value).trim();
+    }
+
+    function formatSourceTitle(source, index) {
+        const metadata = source.metadata || {};
+        return (
+            humanizeSourceLabel(metadata.title) ||
+            humanizeSourceLabel(metadata.source) ||
+            humanizeSourceLabel(source.content?.split("\n")[0]) ||
+            `Источник ${index}`
+        );
+    }
+
+    function formatSourceMeta(metadata, title) {
+        if (!metadata || typeof metadata !== "object") {
+            return "";
+        }
+
+        const parts = [];
+        const page = metadata.page;
+        if (page !== undefined && page !== null && String(page).trim() !== "") {
+            parts.push(`Стр. ${escapeHtml(String(page))}`);
+        }
+
+        const sourcePath = metadata.source ? String(metadata.source).trim() : "";
+        const humanizedPath = humanizeSourceLabel(sourcePath);
+        if (sourcePath && humanizedPath && humanizedPath !== title) {
+            parts.push(escapeHtml(sourcePath));
+        }
+
+        return parts.join(" | ");
+    }
+
+    function formatSourceExcerpt(content) {
+        const text = String(content || "").trim();
+        if (!text) return "Источник доступен без фрагмента текста.";
+        if (text.length <= 320) return text;
+        return `${text.slice(0, 317).trimEnd()}...`;
     }
 
     function renderHistory() {

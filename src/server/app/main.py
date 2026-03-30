@@ -291,6 +291,7 @@ async def _render_web_page(
             "current_user": current_user,
             "is_admin": bool(current_user and current_user.is_admin),
             "admin_exists": admin_exists,
+            "show_sources": config.SHOW_SOURCES,
             "bootstrap_enabled": config.WEB_BOOTSTRAP_ADMIN_TOKEN is not None,
             "error_message": error_message,
             "success_message": success_message,

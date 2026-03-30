@@ -186,6 +186,37 @@ def test_web_ask_accepts_authenticated_web_session(client, monkeypatch, bootstra
     assert response.json()["answer"] == "Ответ найден."
 
 
+def test_web_page_hides_sources_ui_when_disabled(client, monkeypatch, bootstrap_token):
+    monkeypatch.setattr("src.server.app.main.config.SHOW_SOURCES", False)
+
+    bootstrap_response = _bootstrap_admin(client, bootstrap_token)
+    assert bootstrap_response.status_code == 303
+
+    page = client.get("/web")
+
+    assert page.status_code == 200
+    assert 'id="sources-toggle"' not in page.text
+    assert "const showSourcesEnabled = false;" in page.text
+
+
+def test_web_ask_keeps_sources_in_json_when_ui_disabled(client, monkeypatch, bootstrap_token):
+    monkeypatch.setattr("src.server.app.main.ask_question", _fake_ask_question)
+    monkeypatch.setattr("src.server.app.main.config.SHOW_SOURCES", False)
+
+    bootstrap_response = _bootstrap_admin(client, bootstrap_token)
+    assert bootstrap_response.status_code == 303
+
+    response = client.post("/web/ask", json={"question": "Hello world"})
+
+    assert response.status_code == 200
+    assert response.json()["sources"] == [
+        {
+            "content": "Расписание пересдач опубликовано на портале.",
+            "metadata": {"title": "faq", "source": "faq", "page": 2, "chunk_index": 0},
+        }
+    ]
+
+
 def test_web_invite_activation_creates_user_session(client, monkeypatch, bootstrap_token):
     monkeypatch.setattr("src.server.app.main.ask_question", _fake_ask_question)
     bootstrap_response = _bootstrap_admin(client, bootstrap_token)

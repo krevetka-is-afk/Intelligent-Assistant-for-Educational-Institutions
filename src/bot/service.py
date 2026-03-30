@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
 
 from app_runtime import log_extra, setup_logging
@@ -16,6 +18,7 @@ from .api_client import (
     AskAPIUnavailableError,
     AskSource,
 )
+from .core import config
 from .core.crud import create_request, get_or_create_user
 
 setup_logging("bot")
@@ -31,6 +34,7 @@ EMPTY_INDEX_REPLY_TEXT = "База знаний пока не подготовл
         Обратитесь к администратору и запустите индексацию документов."
 TELEGRAM_MESSAGE_LIMIT = 4096
 TELEGRAM_WEB_CONTINUATION_NOTICE = "Далее в веб-интерфейсе."
+_DOCUMENT_EXTENSIONS = (".pdf", ".docx", ".txt", ".html", ".htm")
 
 ReplySender = Callable[[str], Awaitable[None]]
 SUPPORTED_CONTENT_TYPES = frozenset({"text", "image", "pdf"})
@@ -57,6 +61,24 @@ def _truncate_source_title(value: str, *, max_length: int = 120) -> str:
     return f"{value[: max_length - 3].rstrip()}..."
 
 
+def _humanize_source_label(value: str) -> str:
+    candidate = value.strip()
+    if not candidate:
+        return candidate
+
+    if "/" in candidate or "\\" in candidate:
+        candidate = PurePosixPath(candidate.replace("\\", "/")).name
+
+    lowered = candidate.lower()
+    for extension in _DOCUMENT_EXTENSIONS:
+        if lowered.endswith(extension):
+            candidate = candidate[: -len(extension)]
+            break
+
+    candidate = re.sub(r"[-_\s]+", " ", candidate).strip(" ._-")
+    return candidate or value.strip()
+
+
 def _resolve_source_title(source: AskSource, index: int) -> str:
     metadata = source.metadata
     for key in ("title", "source", "Class Index"):
@@ -64,11 +86,11 @@ def _resolve_source_title(source: AskSource, index: int) -> str:
         if title is not None:
             if key == "Class Index":
                 return f"Class {title}"
-            return _truncate_source_title(title)
+            return _truncate_source_title(_humanize_source_label(title))
 
     fallback = _normalize_source_field(source.content.splitlines()[0] if source.content else None)
     if fallback is not None:
-        return _truncate_source_title(fallback, max_length=80)
+        return _truncate_source_title(_humanize_source_label(fallback), max_length=80)
     return f"Источник {index}"
 
 
@@ -111,7 +133,7 @@ def _format_answer_metadata(metadata: dict[str, Any]) -> str:
 def _build_reply_text(answer: str, sources: list[AskSource], metadata: dict[str, Any]) -> str:
     normalized_answer = answer.strip()
     metadata_block = _format_answer_metadata(metadata)
-    sources_block = _format_sources_list(sources)
+    sources_block = _format_sources_list(sources) if config.SHOW_SOURCES else ""
     blocks = [normalized_answer]
     if metadata_block:
         blocks.append(metadata_block)
@@ -187,8 +209,8 @@ async def process_question(
 
     try:
         result = await client.ask(normalized_question)
-        reply_text = _build_reply_text(result.answer, result.sources, result.metadata)
-        sources = result.sources
+        sources = result.sources if config.SHOW_SOURCES else []
+        reply_text = _build_reply_text(result.answer, sources, result.metadata)
         metadata = result.metadata
     except AskAPITimeoutError:
         logger.warning(

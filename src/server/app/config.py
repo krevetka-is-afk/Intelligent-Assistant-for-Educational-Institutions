@@ -123,6 +123,7 @@ CHUNK_SIZE = int(getenv("RAG_CHUNK_SIZE", "500") or "500")
 CHUNK_OVERLAP = int(getenv("RAG_CHUNK_OVERLAP", "100") or "100")
 PREPARE_RAG_ON_STARTUP = _get_bool_env("PREPARE_RAG_ON_STARTUP", True)
 AUTO_INDEX_ON_STARTUP = _get_bool_env("AUTO_INDEX_ON_STARTUP", True)
+SHOW_SOURCES = _get_bool_env("SHOW_SOURCES", True)
 
 LLM_PROMPT_TEMPLATE = """
 Ты отвечаешь на вопросы студентов и сотрудников по документам учебного процесса.

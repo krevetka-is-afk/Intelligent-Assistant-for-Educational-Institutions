@@ -66,3 +66,10 @@ def test_relative_web_auth_database_url_maps_to_data_dir_in_container(monkeypatc
     )
 
     assert config.WEB_AUTH_DATABASE_URL == "sqlite+aiosqlite:////data/.web_auth.db"
+
+
+def test_show_sources_flag_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("SHOW_SOURCES", "0")
+    config = _reload_config(monkeypatch, vector_db_dir=None, documents_dir=None)
+
+    assert config.SHOW_SOURCES is False

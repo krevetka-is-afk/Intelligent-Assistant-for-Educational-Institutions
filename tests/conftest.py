@@ -6,6 +6,7 @@ import pytest
 from starlette.testclient import TestClient
 
 os.environ["API_KEY"] = "test-api-key"
+os.environ["SHOW_SOURCES"] = "1"
 TEST_WEB_AUTH_DB_PATH = Path("/tmp/intelligent_assistant_test_web_auth.db")
 os.environ["WEB_BOOTSTRAP_ADMIN_TOKEN"] = "bootstrap-test-token"
 os.environ["WEB_AUTH_DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_WEB_AUTH_DB_PATH}"

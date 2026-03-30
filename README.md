@@ -26,6 +26,7 @@
 | `APP_ENV` | `server`, `bot`, `client` | Имя окружения для логов |
 | `LOG_LEVEL` | `server`, `bot`, `client` | Уровень логирования |
 | `API_KEY` | `server`, `bot`, `client` | Shared secret для `X-API-Key` |
+| `SHOW_SOURCES` | `server`, `bot`, `client` | Показывать ли источники в `/web`, Streamlit и Telegram-боте |
 | `WEB_BOOTSTRAP_ADMIN_TOKEN` | `server` | Bootstrap token для создания первого web-admin |
 | `WEB_AUTH_DATABASE_URL` | `server` | SQLAlchemy URL хранилища web users, invite-кодов и web-сессий. Если не задан, локально используется `./.web_auth.db`, а в контейнере `/data/web_auth.db` |
 | `API_BASE_URL` | `bot`, `client` | Базовый URL FastAPI |
@@ -72,6 +73,7 @@ cp .env.example .env
 APP_ENV=development
 LOG_LEVEL=INFO
 API_KEY=change-me
+SHOW_SOURCES=1
 WEB_BOOTSTRAP_ADMIN_TOKEN=change-me-bootstrap-token
 API_BASE_URL=http://localhost:8000
 BOT_TOKEN=replace-with-real-token
@@ -80,6 +82,7 @@ OLLAMA_HOST=http://localhost:11434
 ```
 
 `WEB_AUTH_DATABASE_URL` можно не задавать: сервер сам выберет подходящий путь для локального запуска и контейнера.
+Если нужно временно скрыть источники во всех интерфейсах, установите `SHOW_SOURCES=0`.
 
 Первый вход в `/web` делается через bootstrap token:
 

@@ -11,6 +11,7 @@ def _load_bot_modules(monkeypatch, tmp_path):
     monkeypatch.setenv("API_KEY", "bot-test-api-key")
     monkeypatch.setenv("API_BASE_URL", "http://test")
 
+    importlib.reload(importlib.import_module("src.bot.core.config"))
     database = importlib.import_module("src.bot.core.database")
     database = importlib.reload(database)
     crud = importlib.import_module("src.bot.core.crud")
@@ -409,3 +410,68 @@ def test_format_sources_list_deduplicates_title_and_page(monkeypatch, tmp_path):
 
     assert sources_block == "Источники:\n1. Положение, стр. 5\n2. Справка, стр. 8"
     asyncio.run(database.engine.dispose())
+
+
+def test_format_sources_list_humanizes_file_names(monkeypatch, tmp_path):
+    database, _, api_client, service, _ = _load_bot_modules(monkeypatch, tmp_path)
+
+    sources = [
+        api_client.AskSource(
+            content="Doc 1",
+            metadata={"source": "student_handbook/basic/Beginning_of_studies_at_HSE_Moscow.docx"},
+        )
+    ]
+
+    sources_block = service._format_sources_list(sources)
+
+    assert sources_block == "Источники:\n1. Beginning of studies at HSE Moscow"
+    asyncio.run(database.engine.dispose())
+
+
+def test_process_text_question_hides_sources_when_disabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("SHOW_SOURCES", "0")
+    database, _, api_client, service, models = _load_bot_modules(monkeypatch, tmp_path)
+
+    class _FakeAPIClient:
+        async def ask(self, question: str):
+            assert question == "Когда дедлайн?"
+            return api_client.AskResult(
+                answer="Дедлайн указан в LMS.",
+                sources=[
+                    api_client.AskSource(
+                        content="LMS",
+                        metadata={"title": "Портал LMS", "page": 3, "source": "portal"},
+                    )
+                ],
+                metadata={"confidence": 0.82, "fallback_used": False},
+            )
+
+    async def scenario():
+        await database.init_db()
+        sent_messages: list[str] = []
+
+        async def send_reply(text: str) -> None:
+            sent_messages.append(text)
+
+        reply = await service.process_text_question(
+            telegram_id=111,
+            username="student",
+            question="Когда дедлайн?",
+            send_reply=send_reply,
+            api_client=_FakeAPIClient(),
+        )
+
+        async with database.async_session_factory() as session:
+            stored_request = await session.scalar(select(models.Request))
+
+        expected_message = "Дедлайн указан в LMS.\n\nУверенность: 0.82"
+        assert reply.message == expected_message
+        assert reply.sources == []
+        assert sent_messages == [expected_message]
+        assert stored_request is not None
+        assert stored_request.ai_response == expected_message
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())

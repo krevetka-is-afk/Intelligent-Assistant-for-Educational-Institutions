@@ -13,6 +13,16 @@ API_BASE_URL = os.getenv("API_BASE_URL")
 RAG_API_URL = os.getenv("RAG_API_URL")
 
 
+def _get_bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+SHOW_SOURCES = _get_bool_env("SHOW_SOURCES", True)
+
+
 def resolve_api_base_url() -> str | None:
     if API_BASE_URL:
         return API_BASE_URL.rstrip("/")
