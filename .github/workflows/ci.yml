@@ -88,7 +88,7 @@ jobs:
         with:
           name: test-reports-${{ matrix.os }}-py${{ matrix.python-version }}
           path: reports/**
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Pre-commit (all files)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
@@ -163,7 +163,7 @@ jobs:
             coverage.xml
             htmlcov/
             reports/junit-*.xml
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Build package
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

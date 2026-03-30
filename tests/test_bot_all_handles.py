@@ -58,6 +58,7 @@ def _load_all_handlers_module(monkeypatch):
     core_package.__path__ = []
     core_config = types.ModuleType("core.config")
     core_config.RAG_API_URL = "http://rag.test/ask"
+    core_config.API_KEY = None
     core_crud = types.ModuleType("core.crud")
 
     async def _create_query(*args, **kwargs):
@@ -77,6 +78,11 @@ def _load_all_handlers_module(monkeypatch):
     handlers_package = types.ModuleType("handlers")
     handlers_package.__path__ = []
     handlers_common = types.ModuleType("handlers.common")
+
+    class _MediaProcessingError(Exception):
+        pass
+
+    handlers_common.MediaProcessingError = _MediaProcessingError
     handlers_common.read_image = lambda payload: "image text"
     handlers_common.read_PDF = lambda payload: "pdf text"
     handlers_package.common = handlers_common
@@ -148,7 +154,7 @@ def test_call_ask_api_uses_15_second_timeout_and_handles_error_payload(monkeypat
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        def post(self, url, *, json, timeout):
+        def post(self, url, *, json, timeout, headers=None):
             captured["url"] = url
             captured["json"] = json
             captured["timeout_total"] = timeout.total

@@ -6,6 +6,7 @@ import streamlit as st
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 API_URL = f"{API_BASE_URL}/ask"
+API_KEY = os.getenv("API_KEY", "")
 
 logger = logging.getLogger("client")
 logger.setLevel(logging.DEBUG)
@@ -57,10 +58,12 @@ def get_response(promt: str):
     question = promt
 
     try:
+        headers = {"X-API-Key": API_KEY} if API_KEY else {}
         response = requests.post(
             url=API_URL,
             json={"question": question},
             timeout=90,
+            headers=headers,
         )
         logger.debug("Server responded with status code %s", response.status_code)
         response.raise_for_status()

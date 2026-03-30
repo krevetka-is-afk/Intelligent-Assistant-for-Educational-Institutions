@@ -43,7 +43,7 @@ services:
       - seccomp=./security/seccomp/default.json
     cap_drop:
       - ALL
-    pids_limit: 120
+    pids_limit: 512
     restart: unless-stopped
     healthcheck:
       test:
