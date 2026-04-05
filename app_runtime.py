@@ -27,6 +27,8 @@ class ContextDefaultsFilter(logging.Filter):
         for field in ("request_id", "endpoint", "stage", "telegram_id", "error_type"):
             if not getattr(record, field, None):
                 setattr(record, field, "-")
+        if not getattr(record, "web_user_id", None):
+            record.web_user_id = "-"
         return True
 
 
@@ -76,7 +78,8 @@ def setup_logging(service_name: str, *, default_level: str = "INFO") -> None:
                     "format": (
                         "%(asctime)s %(levelname)s service=%(service)s env=%(env)s "
                         "logger=%(name)s request_id=%(request_id)s endpoint=%(endpoint)s "
-                        "stage=%(stage)s telegram_id=%(telegram_id)s error_type=%(error_type)s "
+                        "stage=%(stage)s telegram_id=%(telegram_id)s web_user_id=%(web_user_id)s "
+                        "error_type=%(error_type)s "
                         "%(message)s"
                     )
                 }

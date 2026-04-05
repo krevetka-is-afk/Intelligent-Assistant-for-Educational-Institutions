@@ -631,11 +631,18 @@ async def _process_question(
     request_id: str,
     endpoint: str,
     conversation_key: str | None = None,
+    web_user_id: int | None = None,
 ) -> dict[str, object] | JSONResponse:
+    web_user_id_value = str(web_user_id) if web_user_id is not None else None
     logger.info(
         "Processing question length=%s",
         len(question),
-        extra=log_extra(request_id=request_id, endpoint=endpoint, stage="request"),
+        extra=log_extra(
+            request_id=request_id,
+            endpoint=endpoint,
+            stage="request",
+            web_user_id=web_user_id_value,
+        ),
     )
 
     conversation_history: list[str] = []
@@ -653,6 +660,7 @@ async def _process_question(
                     request_id=request_id,
                     endpoint=endpoint,
                     stage="conversation_memory",
+                    web_user_id=web_user_id_value,
                 ),
             )
         except Exception:
@@ -663,6 +671,7 @@ async def _process_question(
                     endpoint=endpoint,
                     stage="conversation_memory",
                     error_type="conversation_read_failed",
+                    web_user_id=web_user_id_value,
                 ),
             )
             conversation_history = []
@@ -722,6 +731,7 @@ async def _process_question(
                         request_id=request_id,
                         endpoint=endpoint,
                         stage="conversation_memory",
+                        web_user_id=web_user_id_value,
                     ),
                 )
             except Exception:
@@ -732,6 +742,7 @@ async def _process_question(
                         endpoint=endpoint,
                         stage="conversation_memory",
                         error_type="conversation_write_failed",
+                        web_user_id=web_user_id_value,
                     ),
                 )
 
@@ -753,7 +764,12 @@ async def _process_question(
         metadata["retrieval_time_ms"],
         metadata["generation_time_ms"],
         metadata["total_time_ms"],
-        extra=log_extra(request_id=request_id, endpoint=endpoint, stage="response"),
+        extra=log_extra(
+            request_id=request_id,
+            endpoint=endpoint,
+            stage="response",
+            web_user_id=web_user_id_value,
+        ),
     )
 
     return {
@@ -781,6 +797,7 @@ async def ask(request: Request, _: None = Depends(verify_api_key)):
         request_id=request_id,
         endpoint="/ask",
         conversation_key=conversation_key,
+        web_user_id=None,
     )
 
 
@@ -804,4 +821,5 @@ async def ask_from_web(request: Request, _: None = Depends(verify_web_access)):
         request_id=request_id,
         endpoint="/web/ask",
         conversation_key=conversation_key,
+        web_user_id=current_user.id if current_user is not None else None,
     )
