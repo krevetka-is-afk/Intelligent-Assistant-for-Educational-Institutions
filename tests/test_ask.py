@@ -330,6 +330,19 @@ def test_ask_rejects_malformed_json(client, auth_headers):
     assert response.json() == {"error": "Invalid JSON in request body"}
 
 
+def test_ask_rejects_invalid_session_id_without_exception_details(client, auth_headers):
+    response = client.post(
+        "/ask",
+        json={"question": "Hello world", "session_id": {"unexpected": "object"}},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": "session_id must be a non-empty string up to 128 characters"
+    }
+
+
 def test_ask_session_memory_keeps_last_five_messages(client, auth_headers, monkeypatch):
     captured_histories: list[list[str]] = []
 

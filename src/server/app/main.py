@@ -78,6 +78,9 @@ WEB_INVITE_EXPIRY_VALIDATION_MESSAGE = "Срок действия инвайта
      быть положительным числом часов."
 VECTOR_INDEX_EMPTY_MESSAGE = "Vector index is empty. Run indexing first."
 SESSION_ID_MAX_LENGTH = 128
+SESSION_ID_VALIDATION_MESSAGE = (
+    f"session_id must be a non-empty string up to {SESSION_ID_MAX_LENGTH} characters"
+)
 conversation_memory_store = ConversationMemoryStore(
     max_messages=config.CONVERSATION_MEMORY_WINDOW,
     ttl_seconds=config.CONVERSATION_MEMORY_TTL_SECONDS,
@@ -610,7 +613,7 @@ async def _parse_question(
 
     try:
         session_id = _normalize_session_id(data.get("session_id"))
-    except ValueError as exc:
+    except ValueError:
         logger.warning(
             "Invalid session_id",
             extra=log_extra(
@@ -620,7 +623,7 @@ async def _parse_question(
                 error_type="invalid_session_id",
             ),
         )
-        return _error_response(str(exc), 400)
+        return _error_response(SESSION_ID_VALIDATION_MESSAGE, 400)
 
     return ParsedQuestion(question=question, session_id=session_id)
 
