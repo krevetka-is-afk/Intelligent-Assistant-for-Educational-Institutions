@@ -1,14 +1,26 @@
+import asyncio
 import re
 
+import pytest
 from langchain_core.documents import Document
 from starlette.testclient import TestClient
 
-from src.server.app.main import app
+from src.server.app.main import app, conversation_memory_store
 from src.server.app.rag import RAGResponse
 from src.server.app.vector import EmptyVectorStoreError
 
 
-async def _fake_ask_question(question: str) -> RAGResponse:
+@pytest.fixture(autouse=True)
+def reset_conversation_memory_store():
+    asyncio.run(conversation_memory_store.clear_all())
+    yield
+    asyncio.run(conversation_memory_store.clear_all())
+
+
+async def _fake_ask_question(
+    question: str, conversation_history: list[str] | None = None
+) -> RAGResponse:
+    del conversation_history
     assert question == "Hello world"
     return RAGResponse(
         answer="Ответ найден.",
@@ -96,7 +108,10 @@ def test_ask_rejects_empty_question(client, auth_headers):
     assert response.json() == {"error": "Question must be a non-empty string"}
 
 
-async def _raise_empty_index(question: str) -> RAGResponse:
+async def _raise_empty_index(
+    question: str, conversation_history: list[str] | None = None
+) -> RAGResponse:
+    del question, conversation_history
     raise EmptyVectorStoreError("Vector index is empty. Run indexing first.")
 
 
@@ -313,3 +328,147 @@ def test_ask_rejects_malformed_json(client, auth_headers):
 
     assert response.status_code == 400
     assert response.json() == {"error": "Invalid JSON in request body"}
+
+
+def test_ask_rejects_invalid_session_id_without_exception_details(client, auth_headers):
+    response = client.post(
+        "/ask",
+        json={"question": "Hello world", "session_id": {"unexpected": "object"}},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": "session_id must be a non-empty string up to 128 characters"
+    }
+
+
+def test_ask_session_memory_keeps_last_five_messages(client, auth_headers, monkeypatch):
+    captured_histories: list[list[str]] = []
+
+    async def _capture_ask(
+        question: str, conversation_history: list[str] | None = None
+    ) -> RAGResponse:
+        captured_histories.append(list(conversation_history or []))
+        return RAGResponse(
+            answer=f"Ответ на {question}",
+            sources=[],
+            metadata={
+                "model": "mistral:7b",
+                "embedding_model": "cointegrated/rubert-tiny2",
+                "num_sources": 0,
+                "confidence": 0.0,
+                "fallback_used": False,
+                "fallback_reason": None,
+                "retrieval_time_ms": 1,
+                "generation_time_ms": 1,
+                "total_time_ms": 2,
+            },
+            retrieved_documents=[],
+        )
+
+    monkeypatch.setattr("src.server.app.main.ask_question", _capture_ask)
+
+    for index in range(1, 8):
+        response = client.post(
+            "/ask",
+            json={"question": f"Q{index}", "session_id": "tg:42"},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+
+    assert captured_histories == [
+        [],
+        ["Q1"],
+        ["Q1", "Q2"],
+        ["Q1", "Q2", "Q3"],
+        ["Q1", "Q2", "Q3", "Q4"],
+        ["Q1", "Q2", "Q3", "Q4", "Q5"],
+        ["Q2", "Q3", "Q4", "Q5", "Q6"],
+    ]
+
+
+def test_ask_session_memory_isolated_by_session_id(client, auth_headers, monkeypatch):
+    observed: dict[str, list[str]] = {}
+
+    async def _capture_ask(
+        question: str, conversation_history: list[str] | None = None
+    ) -> RAGResponse:
+        observed[question] = list(conversation_history or [])
+        return RAGResponse(
+            answer="ok",
+            sources=[],
+            metadata={
+                "model": "mistral:7b",
+                "embedding_model": "cointegrated/rubert-tiny2",
+                "num_sources": 0,
+                "confidence": 0.0,
+                "fallback_used": False,
+                "fallback_reason": None,
+                "retrieval_time_ms": 1,
+                "generation_time_ms": 1,
+                "total_time_ms": 2,
+            },
+            retrieved_documents=[],
+        )
+
+    monkeypatch.setattr("src.server.app.main.ask_question", _capture_ask)
+
+    first_a = client.post(
+        "/ask",
+        json={"question": "A1", "session_id": "session-a"},
+        headers=auth_headers,
+    )
+    first_b = client.post(
+        "/ask",
+        json={"question": "B1", "session_id": "session-b"},
+        headers=auth_headers,
+    )
+    second_a = client.post(
+        "/ask",
+        json={"question": "A2", "session_id": "session-a"},
+        headers=auth_headers,
+    )
+
+    assert first_a.status_code == 200
+    assert first_b.status_code == 200
+    assert second_a.status_code == 200
+    assert observed["A1"] == []
+    assert observed["B1"] == []
+    assert observed["A2"] == ["A1"]
+
+
+def test_web_ask_uses_web_user_memory_key(client, monkeypatch, bootstrap_token):
+    captured_histories: list[list[str]] = []
+
+    async def _capture_ask(
+        question: str, conversation_history: list[str] | None = None
+    ) -> RAGResponse:
+        captured_histories.append(list(conversation_history or []))
+        return RAGResponse(
+            answer=f"ok: {question}",
+            sources=[],
+            metadata={
+                "model": "mistral:7b",
+                "embedding_model": "cointegrated/rubert-tiny2",
+                "num_sources": 0,
+                "confidence": 0.0,
+                "fallback_used": False,
+                "fallback_reason": None,
+                "retrieval_time_ms": 1,
+                "generation_time_ms": 1,
+                "total_time_ms": 2,
+            },
+            retrieved_documents=[],
+        )
+
+    monkeypatch.setattr("src.server.app.main.ask_question", _capture_ask)
+    bootstrap_response = _bootstrap_admin(client, bootstrap_token)
+    assert bootstrap_response.status_code == 303
+
+    first = client.post("/web/ask", json={"question": "Первый вопрос"})
+    second = client.post("/web/ask", json={"question": "Второй вопрос"})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert captured_histories == [[], ["Первый вопрос"]]

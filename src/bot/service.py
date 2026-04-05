@@ -208,7 +208,32 @@ async def process_question(
     metadata: dict[str, Any] = {}
 
     try:
-        result = await client.ask(normalized_question)
+        conversation_session_id = f"tg:{telegram_id}"
+        logger.info(
+            "Calling /ask with session_id=%s question_len=%s content_type=%s",
+            conversation_session_id,
+            len(normalized_question),
+            content_type,
+            extra=log_extra(
+                telegram_id=str(telegram_id),
+                endpoint="/ask",
+                stage="request",
+            ),
+        )
+        try:
+            result = await client.ask(normalized_question, session_id=conversation_session_id)
+        except TypeError:
+            # Backward compatibility for custom test doubles that still use ask(question).
+            result = await client.ask(normalized_question)
+        logger.info(
+            "Received /ask response for session_id=%s",
+            conversation_session_id,
+            extra=log_extra(
+                telegram_id=str(telegram_id),
+                endpoint="/ask",
+                stage="response",
+            ),
+        )
         sources = result.sources if config.SHOW_SOURCES else []
         reply_text = _build_reply_text(result.answer, sources, result.metadata)
         metadata = result.metadata

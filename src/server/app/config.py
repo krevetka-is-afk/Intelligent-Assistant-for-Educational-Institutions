@@ -133,6 +133,11 @@ LLM_MODEL = getenv("LLM_MODEL", "mistral:7b") or "mistral:7b"
 RAG_TOP_K = int(getenv("RAG_TOP_K", "4") or "4")
 RAG_TOTAL_TIMEOUT_SECONDS = float(getenv("RAG_TOTAL_TIMEOUT_SECONDS", "20") or "20")
 LLM_TIMEOUT_SECONDS = float(getenv("LLM_TIMEOUT_SECONDS", "18") or "18")
+CONVERSATION_MEMORY_WINDOW = int(getenv("CONVERSATION_MEMORY_WINDOW", "5") or "5")
+CONVERSATION_MEMORY_TTL_SECONDS = float(getenv("CONVERSATION_MEMORY_TTL_SECONDS", "3600") or "3600")
+CONVERSATION_MEMORY_MAX_SESSIONS = int(
+    getenv("CONVERSATION_MEMORY_MAX_SESSIONS", "10000") or "10000"
+)
 CHUNK_SIZE = int(getenv("RAG_CHUNK_SIZE", "500") or "500")
 CHUNK_OVERLAP = int(getenv("RAG_CHUNK_OVERLAP", "100") or "100")
 PREPARE_RAG_ON_STARTUP = _get_bool_env("PREPARE_RAG_ON_STARTUP", True)
@@ -147,6 +152,9 @@ LLM_PROMPT_TEMPLATE = """
 - Если данных недостаточно, прямо скажи об этом.
 - Не выдумывай отсутствующие даты, правила или ссылки.
 - Дай краткий ответ на русском языке.
+
+История последних сообщений пользователя:
+{conversation_history}
 
 Контекст:
 {information}
@@ -168,4 +176,10 @@ def validate_chunk_settings() -> None:
 def validate_runtime_config() -> None:
     if API_KEY is None:
         raise RuntimeError("API_KEY is not set")
+    if CONVERSATION_MEMORY_WINDOW <= 0:
+        raise RuntimeError("CONVERSATION_MEMORY_WINDOW must be positive")
+    if CONVERSATION_MEMORY_TTL_SECONDS <= 0:
+        raise RuntimeError("CONVERSATION_MEMORY_TTL_SECONDS must be positive")
+    if CONVERSATION_MEMORY_MAX_SESSIONS <= 0:
+        raise RuntimeError("CONVERSATION_MEMORY_MAX_SESSIONS must be positive")
     validate_chunk_settings()

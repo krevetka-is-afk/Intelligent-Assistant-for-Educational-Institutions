@@ -5,6 +5,7 @@ import hmac
 import json
 import logging
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
@@ -36,6 +37,7 @@ from .auth_crud import (
 )
 from .auth_database import dispose_auth_db, init_auth_db
 from .auth_models import WebUser
+from .conversation_memory import ConversationMemoryStore
 from .document_ingestion import IndexingSummary, index_directory
 from .metrics import (
     rag_errors_total,
@@ -75,6 +77,15 @@ WEB_CREDENTIALS_VALIDATION_MESSAGE = (
 WEB_INVITE_EXPIRY_VALIDATION_MESSAGE = "Срок действия инвайта должен\
      быть положительным числом часов."
 VECTOR_INDEX_EMPTY_MESSAGE = "Vector index is empty. Run indexing first."
+SESSION_ID_MAX_LENGTH = 128
+SESSION_ID_VALIDATION_MESSAGE = (
+    f"session_id must be a non-empty string up to {SESSION_ID_MAX_LENGTH} characters"
+)
+conversation_memory_store = ConversationMemoryStore(
+    max_messages=config.CONVERSATION_MEMORY_WINDOW,
+    ttl_seconds=config.CONVERSATION_MEMORY_TTL_SECONDS,
+    max_sessions=config.CONVERSATION_MEMORY_MAX_SESSIONS,
+)
 
 
 def _prepare_rag_runtime() -> None:
@@ -533,9 +544,29 @@ async def web_logout(request: Request) -> RedirectResponse:
     return response
 
 
+@dataclass(slots=True)
+class ParsedQuestion:
+    question: str
+    session_id: str | None
+
+
+def _normalize_session_id(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("session_id must be a string")
+
+    session_id = value.strip()
+    if not session_id:
+        return None
+    if len(session_id) > SESSION_ID_MAX_LENGTH:
+        raise ValueError(f"session_id must not exceed {SESSION_ID_MAX_LENGTH} characters")
+    return session_id
+
+
 async def _parse_question(
     request: Request, *, request_id: str, endpoint: str
-) -> str | JSONResponse:
+) -> ParsedQuestion | JSONResponse:
     try:
         data = await request.json()
     except json.JSONDecodeError:
@@ -548,6 +579,8 @@ async def _parse_question(
                 error_type="invalid_json",
             ),
         )
+        return _error_response("Invalid JSON in request body", 400)
+    if not isinstance(data, dict):
         return _error_response("Invalid JSON in request body", 400)
 
     question = data.get("question")
@@ -577,20 +610,77 @@ async def _parse_question(
             ),
         )
         return _error_response("Question must not exceed 500 characters", 400)
-    return question
+
+    try:
+        session_id = _normalize_session_id(data.get("session_id"))
+    except ValueError:
+        logger.warning(
+            "Invalid session_id",
+            extra=log_extra(
+                request_id=request_id,
+                endpoint=endpoint,
+                stage="validation",
+                error_type="invalid_session_id",
+            ),
+        )
+        return _error_response(SESSION_ID_VALIDATION_MESSAGE, 400)
+
+    return ParsedQuestion(question=question, session_id=session_id)
 
 
 async def _process_question(
-    question: str, *, request_id: str, endpoint: str
+    question: str,
+    *,
+    request_id: str,
+    endpoint: str,
+    conversation_key: str | None = None,
+    web_user_id: int | None = None,
 ) -> dict[str, object] | JSONResponse:
+    web_user_id_value = str(web_user_id) if web_user_id is not None else None
     logger.info(
         "Processing question length=%s",
         len(question),
-        extra=log_extra(request_id=request_id, endpoint=endpoint, stage="request"),
+        extra=log_extra(
+            request_id=request_id,
+            endpoint=endpoint,
+            stage="request",
+            web_user_id=web_user_id_value,
+        ),
     )
 
+    conversation_history: list[str] = []
+    if conversation_key is not None:
+        try:
+            conversation_history = await conversation_memory_store.get_recent_user_messages(
+                conversation_key
+            )
+            conversation_scope = conversation_key.split(":", maxsplit=1)[0]
+            logger.info(
+                "Loaded conversation history scope=%s messages=%s",
+                conversation_scope,
+                len(conversation_history),
+                extra=log_extra(
+                    request_id=request_id,
+                    endpoint=endpoint,
+                    stage="conversation_memory",
+                    web_user_id=web_user_id_value,
+                ),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to load conversation history",
+                extra=log_extra(
+                    request_id=request_id,
+                    endpoint=endpoint,
+                    stage="conversation_memory",
+                    error_type="conversation_read_failed",
+                    web_user_id=web_user_id_value,
+                ),
+            )
+            conversation_history = []
+
     try:
-        result = await ask_question(question)
+        result = await ask_question(question, conversation_history=conversation_history)
     except EmptyVectorStoreError as exc:
         rag_errors_total.labels(stage="vector_store").inc()
         logger.warning(
@@ -632,6 +722,32 @@ async def _process_question(
             ),
         )
         return _error_response("Failed to generate a response. Please try again later.", 500)
+    finally:
+        if conversation_key is not None:
+            try:
+                await conversation_memory_store.append_user_message(conversation_key, question)
+                conversation_scope = conversation_key.split(":", maxsplit=1)[0]
+                logger.info(
+                    "Stored conversation message scope=%s",
+                    conversation_scope,
+                    extra=log_extra(
+                        request_id=request_id,
+                        endpoint=endpoint,
+                        stage="conversation_memory",
+                        web_user_id=web_user_id_value,
+                    ),
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to persist conversation memory",
+                    extra=log_extra(
+                        request_id=request_id,
+                        endpoint=endpoint,
+                        stage="conversation_memory",
+                        error_type="conversation_write_failed",
+                        web_user_id=web_user_id_value,
+                    ),
+                )
 
     metadata = result.metadata
     rag_retrieval_seconds.observe(metadata["retrieval_time_ms"] / 1000)
@@ -651,7 +767,12 @@ async def _process_question(
         metadata["retrieval_time_ms"],
         metadata["generation_time_ms"],
         metadata["total_time_ms"],
-        extra=log_extra(request_id=request_id, endpoint=endpoint, stage="response"),
+        extra=log_extra(
+            request_id=request_id,
+            endpoint=endpoint,
+            stage="response",
+            web_user_id=web_user_id_value,
+        ),
     )
 
     return {
@@ -667,10 +788,20 @@ async def ask(request: Request, _: None = Depends(verify_api_key)):
     request_id = uuid4().hex[:12]
     rag_requests_total.inc()
 
-    question = await _parse_question(request, request_id=request_id, endpoint="/ask")
-    if isinstance(question, JSONResponse):
-        return question
-    return await _process_question(question, request_id=request_id, endpoint="/ask")
+    parsed = await _parse_question(request, request_id=request_id, endpoint="/ask")
+    if isinstance(parsed, JSONResponse):
+        return parsed
+
+    conversation_key = None
+    if parsed.session_id is not None:
+        conversation_key = f"ask:{parsed.session_id}"
+    return await _process_question(
+        parsed.question,
+        request_id=request_id,
+        endpoint="/ask",
+        conversation_key=conversation_key,
+        web_user_id=None,
+    )
 
 
 @app.post("/web/ask")
@@ -679,7 +810,19 @@ async def ask_from_web(request: Request, _: None = Depends(verify_web_access)):
     request_id = uuid4().hex[:12]
     rag_requests_total.inc()
 
-    question = await _parse_question(request, request_id=request_id, endpoint="/web/ask")
-    if isinstance(question, JSONResponse):
-        return question
-    return await _process_question(question, request_id=request_id, endpoint="/web/ask")
+    parsed = await _parse_question(request, request_id=request_id, endpoint="/web/ask")
+    if isinstance(parsed, JSONResponse):
+        return parsed
+
+    current_user = await _get_current_web_user(request)
+    conversation_key = f"web:{current_user.id}" if current_user is not None else None
+    if conversation_key is None and parsed.session_id is not None:
+        conversation_key = f"ask:{parsed.session_id}"
+
+    return await _process_question(
+        parsed.question,
+        request_id=request_id,
+        endpoint="/web/ask",
+        conversation_key=conversation_key,
+        web_user_id=current_user.id if current_user is not None else None,
+    )

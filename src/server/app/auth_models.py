@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -98,3 +98,23 @@ class WebSession(Base):
     user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     user: Mapped[WebUser] = relationship(back_populates="sessions")
+
+
+class ConversationMemoryMessage(Base):
+    __tablename__ = "conversation_memory_messages"
+    __table_args__ = (
+        Index(
+            "ix_conversation_memory_messages_session_created",
+            "session_key",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_key: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        nullable=False,
+        server_default=func.now(),
+    )
