@@ -75,3 +75,39 @@ def test_ask_question_returns_fallback_when_llm_fails(monkeypatch):
     assert result.metadata["num_sources"] == 1
     assert result.answer.startswith("LLM временно недоступна")
     assert result.sources[0]["metadata"]["title"] == "Правила"
+
+
+def test_ask_question_uses_conversation_history_in_retrieval_query(monkeypatch):
+    docs = [
+        RetrievedDocument(
+            document=Document(page_content="x", metadata={"source": "s"}),
+            distance=0.1,
+        )
+    ]
+    observed: dict[str, str] = {}
+
+    def _similarity_search(question: str, k: int):
+        observed["query"] = question
+        observed["k"] = str(k)
+        return docs
+
+    monkeypatch.setattr(rag, "similarity_search", _similarity_search)
+    monkeypatch.setattr(rag, "invoke_llm", lambda question, retrieved_documents, _: "ok")
+
+    result = asyncio.run(
+        rag.ask_question(
+            "А что по дедлайну?",
+            conversation_history=[
+                "Я на 2 курсе",
+                "У меня пересдача в июле",
+                "Какие документы нужны?",
+                "И куда нести?",
+            ],
+        )
+    )
+
+    assert result.answer == "ok"
+    assert observed["k"] == str(rag.config.RAG_TOP_K)
+    assert observed["query"] == (
+        "У меня пересдача в июле\nКакие документы нужны?\nИ куда нести?\nА что по дедлайну?"
+    )

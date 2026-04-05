@@ -44,6 +44,9 @@
 | `RAG_TOP_K` | `server` | Сколько чанков доставать из Chroma |
 | `RAG_TOTAL_TIMEOUT_SECONDS` | `server` | Общий бюджет времени RAG |
 | `LLM_TIMEOUT_SECONDS` | `server` | Таймаут вызова LLM |
+| `CONVERSATION_MEMORY_WINDOW` | `server` | Размер окна памяти последних сообщений пользователя (по умолчанию `5`) |
+| `CONVERSATION_MEMORY_TTL_SECONDS` | `server` | TTL контекста диалога в секундах (по умолчанию `3600`) |
+| `CONVERSATION_MEMORY_MAX_SESSIONS` | `server` | Ограничение на число активных сессий контекста |
 | `PREPARE_RAG_ON_STARTUP` | `server` | Подготавливать ли embeddings/vector store до ready-состояния сервиса |
 | `AUTO_INDEX_ON_STARTUP` | `server` | Автоматически индексировать `DOCUMENTS_DIR`, если vector store пуст на старте |
 
@@ -83,6 +86,7 @@ OLLAMA_HOST=http://localhost:11434
 
 `WEB_AUTH_DATABASE_URL` можно не задавать: сервер сам выберет подходящий путь для локального запуска и контейнера.
 Если нужно временно скрыть источники во всех интерфейсах, установите `SHOW_SOURCES=0`.
+Контекст последних сообщений хранится в БД `WEB_AUTH_DATABASE_URL`, поэтому при server deploy и рестартах не теряется.
 
 Первый вход в `/web` делается через bootstrap token:
 
@@ -128,7 +132,7 @@ uv run uvicorn src.server.app.main:app --reload
 curl -X POST http://localhost:8000/ask \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
-  -d '{"question":"Когда пересдача?"}'
+  -d '{"question":"Когда пересдача?", "session_id":"tg:123456"}'
 ```
 
 ### 5. Запуск Streamlit

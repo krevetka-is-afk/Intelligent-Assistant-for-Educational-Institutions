@@ -1,5 +1,6 @@
 import asyncio
 import importlib
+import json
 
 import httpx
 from sqlalchemy import select
@@ -48,6 +49,31 @@ def test_ask_api_client_accepts_answer_only(monkeypatch, tmp_path):
         assert result.sources[0].content == "Документ"
         assert result.sources[0].metadata == {"page": 7}
         assert result.metadata == {}
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
+
+
+def test_ask_api_client_sends_optional_session_id(monkeypatch, tmp_path):
+    database, _, api_client, _, _ = _load_bot_modules(monkeypatch, tmp_path)
+
+    async def scenario():
+        async def handler(request: httpx.Request) -> httpx.Response:
+            assert request.headers["X-API-Key"] == "bot-test-api-key"
+            assert json.loads(request.content.decode("utf-8")) == {
+                "question": "question",
+                "session_id": "tg:101",
+            }
+            return httpx.Response(200, json={"answer": "ok", "sources": [], "metadata": {}})
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            client = api_client.AskAPIClient(base_url="http://test", client=http_client)
+            result = await client.ask("question", session_id="tg:101")
+
+        assert result.answer == "ok"
 
     try:
         asyncio.run(scenario())
@@ -197,6 +223,43 @@ def test_process_text_question_handles_timeout(monkeypatch, tmp_path, caplog):
         asyncio.run(database.engine.dispose())
 
     assert "Timed out while processing question" in caplog.text
+
+
+def test_process_text_question_passes_session_id(monkeypatch, tmp_path):
+    database, _, api_client, service, _ = _load_bot_modules(monkeypatch, tmp_path)
+
+    class _FakeAPIClient:
+        async def ask(self, question: str, session_id: str | None = None):
+            assert question == "Когда дедлайн?"
+            assert session_id == "tg:101"
+            return api_client.AskResult(
+                answer="Дедлайн указан в LMS.",
+                sources=[],
+                metadata={"confidence": 0.82, "fallback_used": False},
+            )
+
+    async def scenario():
+        await database.init_db()
+        sent_messages: list[str] = []
+
+        async def send_reply(text: str) -> None:
+            sent_messages.append(text)
+
+        reply = await service.process_text_question(
+            telegram_id=101,
+            username="student",
+            question="Когда дедлайн?",
+            send_reply=send_reply,
+            api_client=_FakeAPIClient(),
+        )
+
+        assert reply.message == "Дедлайн указан в LMS.\n\nУверенность: 0.82"
+        assert sent_messages == [reply.message]
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
 
 
 def test_process_text_question_handles_api_unavailable(monkeypatch, tmp_path, caplog):

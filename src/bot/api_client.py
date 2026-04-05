@@ -81,22 +81,37 @@ class AskAPIClient:
         self.timeout_seconds = timeout_seconds
         self._client = client
 
-    async def ask(self, question: str) -> AskResult:
+    async def ask(self, question: str, session_id: str | None = None) -> AskResult:
         normalized_question = question.strip()
         if not normalized_question:
             raise ValueError("Question must be a non-empty string")
+        normalized_session_id = session_id.strip() if isinstance(session_id, str) else None
+        if normalized_session_id == "":
+            normalized_session_id = None
 
         if self._client is not None:
-            return await self._ask_with_client(self._client, normalized_question)
+            return await self._ask_with_client(
+                self._client,
+                normalized_question,
+                normalized_session_id,
+            )
 
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            return await self._ask_with_client(client, normalized_question)
+            return await self._ask_with_client(client, normalized_question, normalized_session_id)
 
-    async def _ask_with_client(self, client: httpx.AsyncClient, question: str) -> AskResult:
+    async def _ask_with_client(
+        self,
+        client: httpx.AsyncClient,
+        question: str,
+        session_id: str | None,
+    ) -> AskResult:
+        payload: dict[str, str] = {"question": question}
+        if session_id is not None:
+            payload["session_id"] = session_id
         try:
             response = await client.post(
                 self.api_url,
-                json={"question": question},
+                json=payload,
                 headers=self._build_headers(),
                 timeout=self.timeout_seconds,
             )
