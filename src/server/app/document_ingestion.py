@@ -134,6 +134,10 @@ def build_document_id(relative_path: Path) -> str:
     return sha256(relative_path.as_posix().encode("utf-8")).hexdigest()[:24]
 
 
+def _is_temporary_office_file(path: Path) -> bool:
+    return path.suffix.lower() == ".docx" and path.name.startswith("~$")
+
+
 def chunk_text(text: str, *, chunk_size: int, overlap: int) -> list[tuple[int, int, str]]:
     if not text:
         return []
@@ -341,7 +345,9 @@ def _iter_supported_files(input_dir: Path) -> list[Path]:
     return sorted(
         path
         for path in input_dir.rglob("*")
-        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+        if path.is_file()
+        and path.suffix.lower() in SUPPORTED_EXTENSIONS
+        and not _is_temporary_office_file(path)
     )
 
 
@@ -351,6 +357,30 @@ def _delete_document_chunks(vector_store: Chroma, document_id: str) -> None:
     existing_ids = existing.get("ids", [])
     if existing_ids:
         collection.delete(ids=existing_ids)
+
+
+def _get_indexed_document_ids(vector_store: Chroma) -> set[str]:
+    collection = vector_store._collection
+    existing = collection.get(include=["metadatas"])
+    document_ids: set[str] = set()
+
+    for metadata in existing.get("metadatas", []):
+        if not isinstance(metadata, dict):
+            continue
+        document_id = metadata.get("document_id")
+        if isinstance(document_id, str) and document_id:
+            document_ids.add(document_id)
+
+    return document_ids
+
+
+def _delete_stale_document_chunks(
+    vector_store: Chroma, *, active_document_ids: set[str]
+) -> list[str]:
+    stale_document_ids = sorted(_get_indexed_document_ids(vector_store) - active_document_ids)
+    for document_id in stale_document_ids:
+        _delete_document_chunks(vector_store, document_id)
+    return stale_document_ids
 
 
 def create_vector_store(persist_directory: Path, collection_name: str, *, rebuild: bool) -> Chroma:
@@ -397,8 +427,13 @@ def index_directory(
     vector_store = create_vector_store(persist_directory, collection, rebuild=rebuild)
     summary = IndexingSummary()
     indexed_at = datetime.now(UTC).isoformat()
+    indexed_paths = _iter_supported_files(input_dir)
+    root_dir = input_dir.resolve()
+    active_document_ids = {
+        build_document_id(path.resolve().relative_to(root_dir)) for path in indexed_paths
+    }
 
-    for path in _iter_supported_files(input_dir):
+    for path in indexed_paths:
         summary.files_seen += 1
         try:
             parsed_document = load_document(path, root_dir=input_dir)
@@ -426,5 +461,14 @@ def index_directory(
         except Exception:
             summary.failed_files += 1
             logger.exception("Unexpected indexing failure for %s", path)
+
+    stale_document_ids = _delete_stale_document_chunks(
+        vector_store, active_document_ids=active_document_ids
+    )
+    if stale_document_ids:
+        logger.info(
+            "Removed stale indexed documents: count=%s",
+            len(stale_document_ids),
+        )
 
     return summary

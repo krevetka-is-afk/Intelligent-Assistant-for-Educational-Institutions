@@ -137,3 +137,56 @@ def test_index_directory_does_not_duplicate_chunks_and_rebuilds(tmp_path, monkey
     assert second.indexed_files == 2
     assert third.indexed_files == 2
     assert first_count == second_count == rebuilt_count
+
+
+def test_index_directory_ignores_temporary_word_lock_files(tmp_path, monkeypatch):
+    input_dir = tmp_path / "docs"
+    persist_dir = tmp_path / "db"
+    input_dir.mkdir()
+    (input_dir / "guide.txt").write_text("Полезный текст для индексации", encoding="utf-8")
+    (input_dir / "~$guide.docx").write_text("not a real docx", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "src.server.app.document_ingestion.get_embedding_function", lambda: _FakeEmbeddings()
+    )
+
+    summary = index_directory(input_dir, persist_dir, collection_name="test_docs", rebuild=True)
+
+    assert summary.files_seen == 1
+    assert summary.indexed_files == 1
+    assert summary.failed_files == 0
+
+
+def test_index_directory_deletes_stale_documents_without_rebuild(tmp_path, monkeypatch):
+    input_dir = tmp_path / "docs"
+    persist_dir = tmp_path / "db"
+    input_dir.mkdir()
+    (input_dir / "a.txt").write_text("A" * 400, encoding="utf-8")
+    stale_path = input_dir / "b.txt"
+    stale_path.write_text("B" * 400, encoding="utf-8")
+
+    monkeypatch.setattr(
+        "src.server.app.document_ingestion.get_embedding_function", lambda: _FakeEmbeddings()
+    )
+
+    index_directory(input_dir, persist_dir, collection_name="test_docs", rebuild=True)
+    store = Chroma(
+        collection_name="test_docs",
+        persist_directory=str(persist_dir),
+        embedding_function=_FakeEmbeddings(),
+    )
+    initial = store._collection.get(include=["metadatas"])
+    initial_document_ids = {
+        metadata["document_id"] for metadata in initial["metadatas"] if metadata is not None
+    }
+    assert len(initial_document_ids) == 2
+
+    stale_path.unlink()
+    index_directory(input_dir, persist_dir, collection_name="test_docs", rebuild=False)
+
+    after_cleanup = store._collection.get(include=["metadatas"])
+    remaining_document_ids = {
+        metadata["document_id"] for metadata in after_cleanup["metadatas"] if metadata is not None
+    }
+
+    assert len(remaining_document_ids) == 1

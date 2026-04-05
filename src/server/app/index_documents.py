@@ -5,6 +5,8 @@ import logging
 import sys
 from pathlib import Path
 
+from app_runtime import log_extra, setup_logging
+
 from . import config
 from .document_ingestion import index_directory
 from .vector import clear_vector_cache
@@ -33,10 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    setup_logging("server")
     parser = build_parser()
     args = parser.parse_args()
 
@@ -48,7 +47,11 @@ def main() -> int:
             rebuild=args.rebuild,
         )
     except Exception as exc:
-        logging.getLogger("server.indexing").exception("Fatal indexing error: %s", exc)
+        logging.getLogger("server.indexing").exception(
+            "Fatal indexing error: %s",
+            exc,
+            extra=log_extra(stage="indexing", error_type=type(exc).__name__),
+        )
         return 1
 
     logging.getLogger("server.indexing").info(
@@ -61,6 +64,7 @@ def main() -> int:
         summary.skipped_files,
         summary.failed_files,
         summary.chunks_written,
+        extra=log_extra(stage="indexing"),
     )
     return 0
 

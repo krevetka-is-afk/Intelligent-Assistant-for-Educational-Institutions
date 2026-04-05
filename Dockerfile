@@ -29,6 +29,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # COPY src/client /client
 COPY ./src ./src
 COPY ./data_and_documents ./data_and_documents
+COPY ./app_runtime.py ./app_runtime.py
 
 COPY VERSION ./
 
@@ -46,7 +47,8 @@ ARG APP_UID=1000
 ARG APP_GID=1000
 
 ENV PATH=/app/bin:$PATH \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/workspace
 
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -68,16 +70,31 @@ RUN addgroup --gid ${APP_GID} appgroup && \
 FROM runtime-base AS server
 
 COPY --from=build --chown=appuser:appgroup /app /app
-COPY --from=build --chown=appuser:appgroup /_project/src/server /server
+COPY --from=build --chown=appuser:appgroup /_project/src/server /workspace/src/server
 COPY --from=build --chown=appuser:appgroup /_project/data_and_documents /data_and_documents
-RUN chmod -R a+rX /app /server
+COPY --from=build --chown=appuser:appgroup /_project/app_runtime.py /workspace/app_runtime.py
+RUN chmod -R a+rX /app /workspace /data_and_documents
 
-WORKDIR /server
+WORKDIR /workspace
 # USER appuser # if uncomment cause to fail
 
 EXPOSE 8000
 
-CMD ["/app/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/app/bin/python", "-m", "uvicorn", "src.server.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+############################
+# Runtime stage: bot
+############################
+FROM runtime-base AS bot
+
+COPY --from=build --chown=appuser:appgroup /app /app
+COPY --from=build --chown=appuser:appgroup /_project/src/bot /workspace/src/bot
+COPY --from=build --chown=appuser:appgroup /_project/app_runtime.py /workspace/app_runtime.py
+RUN chmod -R a+rX /app /workspace
+
+WORKDIR /workspace
+
+CMD ["/app/bin/python", "-m", "src.bot.bot"]
 
 ############################
 # Runtime stage: client
@@ -86,16 +103,18 @@ FROM runtime-base AS client
 
 ENV PATH=/app/bin:$PATH \
     PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/workspace \
     STREAMLIT_SERVER_PORT=8501 \
     STREAMLIT_SERVER_ADDRESS=0.0.0.0
 
 COPY --from=build --chown=appuser:appgroup /app /app
-COPY --from=build --chown=appuser:appgroup /_project/src/client /client
-RUN chmod -R a+rX /app /client
+COPY --from=build --chown=appuser:appgroup /_project/src/client /workspace/src/client
+COPY --from=build --chown=appuser:appgroup /_project/app_runtime.py /workspace/app_runtime.py
+RUN chmod -R a+rX /app /workspace
 
-WORKDIR /client
+WORKDIR /workspace
 # USER appuser
 
 EXPOSE 8501
 
-CMD ["/app/bin/python", "-m", "streamlit", "run", "app/streamlit_app.py"]
+CMD ["/app/bin/python", "-m", "streamlit", "run", "src/client/app/streamlit_app.py"]

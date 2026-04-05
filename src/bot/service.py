@@ -1,36 +1,40 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
+
+from app_runtime import log_extra, setup_logging
 
 from .api_client import (
     DEFAULT_TIMEOUT_SECONDS,
     AskAPIClient,
     AskAPIResponseError,
     AskAPITimeoutError,
+    AskAPIUnauthorizedError,
     AskAPIUnavailableError,
     AskSource,
 )
+from .core import config
 from .core.crud import create_request, get_or_create_user
 
+setup_logging("bot")
 logger = logging.getLogger("bot.service")
-logger.setLevel(logging.INFO)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-logger.propagate = False
 
 TIMEOUT_REPLY_TEXT = (
     f"Сервис отвечает дольше {int(DEFAULT_TIMEOUT_SECONDS)} секунд. Попробуйте позже."
 )
 UNAVAILABLE_REPLY_TEXT = "Сервис ответов сейчас недоступен. Попробуйте позже."
+UNAUTHORIZED_REPLY_TEXT = "Сервис ответов отклонил запрос. Проверьте конфигурацию доступа."
 INVALID_RESPONSE_REPLY_TEXT = "Не удалось обработать ответ сервиса. Попробуйте позже."
+EMPTY_INDEX_REPLY_TEXT = "База знаний пока не подготовлена. \
+        Обратитесь к администратору и запустите индексацию документов."
 TELEGRAM_MESSAGE_LIMIT = 4096
 TELEGRAM_WEB_CONTINUATION_NOTICE = "Далее в веб-интерфейсе."
+_DOCUMENT_EXTENSIONS = (".pdf", ".docx", ".txt", ".html", ".htm")
 
 ReplySender = Callable[[str], Awaitable[None]]
 SUPPORTED_CONTENT_TYPES = frozenset({"text", "image", "pdf"})
@@ -57,6 +61,24 @@ def _truncate_source_title(value: str, *, max_length: int = 120) -> str:
     return f"{value[: max_length - 3].rstrip()}..."
 
 
+def _humanize_source_label(value: str) -> str:
+    candidate = value.strip()
+    if not candidate:
+        return candidate
+
+    if "/" in candidate or "\\" in candidate:
+        candidate = PurePosixPath(candidate.replace("\\", "/")).name
+
+    lowered = candidate.lower()
+    for extension in _DOCUMENT_EXTENSIONS:
+        if lowered.endswith(extension):
+            candidate = candidate[: -len(extension)]
+            break
+
+    candidate = re.sub(r"[-_\s]+", " ", candidate).strip(" ._-")
+    return candidate or value.strip()
+
+
 def _resolve_source_title(source: AskSource, index: int) -> str:
     metadata = source.metadata
     for key in ("title", "source", "Class Index"):
@@ -64,11 +86,11 @@ def _resolve_source_title(source: AskSource, index: int) -> str:
         if title is not None:
             if key == "Class Index":
                 return f"Class {title}"
-            return _truncate_source_title(title)
+            return _truncate_source_title(_humanize_source_label(title))
 
     fallback = _normalize_source_field(source.content.splitlines()[0] if source.content else None)
     if fallback is not None:
-        return _truncate_source_title(fallback, max_length=80)
+        return _truncate_source_title(_humanize_source_label(fallback), max_length=80)
     return f"Источник {index}"
 
 
@@ -111,7 +133,7 @@ def _format_answer_metadata(metadata: dict[str, Any]) -> str:
 def _build_reply_text(answer: str, sources: list[AskSource], metadata: dict[str, Any]) -> str:
     normalized_answer = answer.strip()
     metadata_block = _format_answer_metadata(metadata)
-    sources_block = _format_sources_list(sources)
+    sources_block = _format_sources_list(sources) if config.SHOW_SOURCES else ""
     blocks = [normalized_answer]
     if metadata_block:
         blocks.append(metadata_block)
@@ -156,6 +178,12 @@ async def _send_reply_chunks(send_reply: ReplySender, reply_text: str) -> None:
         await send_reply(chunk)
 
 
+def _reply_for_api_unavailable(error: AskAPIUnavailableError) -> str:
+    if error.error_code == "vector_index_empty":
+        return EMPTY_INDEX_REPLY_TEXT
+    return UNAVAILABLE_REPLY_TEXT
+
+
 async def process_question(
     telegram_id: int,
     username: str | None,
@@ -180,39 +208,112 @@ async def process_question(
     metadata: dict[str, Any] = {}
 
     try:
-        result = await client.ask(normalized_question)
-        reply_text = _build_reply_text(result.answer, result.sources, result.metadata)
-        sources = result.sources
+        conversation_session_id = f"tg:{telegram_id}"
+        logger.info(
+            "Calling /ask with session_id=%s question_len=%s content_type=%s",
+            conversation_session_id,
+            len(normalized_question),
+            content_type,
+            extra=log_extra(
+                telegram_id=str(telegram_id),
+                endpoint="/ask",
+                stage="request",
+            ),
+        )
+        try:
+            result = await client.ask(normalized_question, session_id=conversation_session_id)
+        except TypeError:
+            # Backward compatibility for custom test doubles that still use ask(question).
+            result = await client.ask(normalized_question)
+        logger.info(
+            "Received /ask response for session_id=%s",
+            conversation_session_id,
+            extra=log_extra(
+                telegram_id=str(telegram_id),
+                endpoint="/ask",
+                stage="response",
+            ),
+        )
+        sources = result.sources if config.SHOW_SOURCES else []
+        reply_text = _build_reply_text(result.answer, sources, result.metadata)
         metadata = result.metadata
     except AskAPITimeoutError:
         logger.warning(
             "Timed out while processing question for telegram_id=%s after %.1f seconds",
             telegram_id,
             DEFAULT_TIMEOUT_SECONDS,
+            extra=log_extra(
+                telegram_id=str(telegram_id),
+                stage="network",
+                error_type="AskAPITimeoutError",
+            ),
         )
         reply_text = TIMEOUT_REPLY_TEXT
         metadata = {}
-    except AskAPIUnavailableError:
-        logger.exception(
-            "API unavailable while processing question for telegram_id=%s",
+    except AskAPIUnauthorizedError:
+        logger.error(
+            "API rejected bot credentials for telegram_id=%s",
             telegram_id,
+            extra=log_extra(
+                telegram_id=str(telegram_id),
+                stage="auth",
+                error_type="AskAPIUnauthorizedError",
+            ),
         )
-        reply_text = UNAVAILABLE_REPLY_TEXT
+        reply_text = UNAUTHORIZED_REPLY_TEXT
+        metadata = {}
+    except AskAPIUnavailableError as exc:
+        log_message = "API unavailable while processing question for telegram_id=%s"
+        log_kwargs = {
+            "extra": log_extra(
+                telegram_id=str(telegram_id),
+                stage="network",
+                error_type=exc.error_code or "AskAPIUnavailableError",
+            )
+        }
+        if exc.error_code == "vector_index_empty":
+            logger.warning(log_message, telegram_id, **log_kwargs)
+        else:
+            logger.error(log_message, telegram_id, exc_info=True, **log_kwargs)
+        reply_text = _reply_for_api_unavailable(exc)
         metadata = {}
     except AskAPIResponseError:
-        logger.exception("API returned invalid payload for telegram_id=%s", telegram_id)
+        logger.error(
+            "API returned invalid payload for telegram_id=%s",
+            telegram_id,
+            extra=log_extra(
+                telegram_id=str(telegram_id),
+                stage="response",
+                error_type="AskAPIResponseError",
+            ),
+            exc_info=True,
+        )
         reply_text = INVALID_RESPONSE_REPLY_TEXT
         metadata = {}
 
-    request = await create_request(
-        user_id=user.id,
-        content_type=content_type,
-        raw_content=raw_content if raw_content is not None else normalized_question,
-        ai_response=reply_text,
-    )
     await _send_reply_chunks(send_reply, reply_text)
+    request_id = -1
+    try:
+        request = await create_request(
+            user_id=user.id,
+            content_type=content_type,
+            raw_content=raw_content if raw_content is not None else normalized_question,
+            ai_response=reply_text,
+        )
+        request_id = request.id
+    except Exception:
+        logger.error(
+            "Failed to persist request history for telegram_id=%s",
+            telegram_id,
+            extra=log_extra(
+                telegram_id=str(telegram_id),
+                stage="database",
+                error_type="database_write_failed",
+            ),
+            exc_info=True,
+        )
 
-    return BotReply(message=reply_text, sources=sources, metadata=metadata, request_id=request.id)
+    return BotReply(message=reply_text, sources=sources, metadata=metadata, request_id=request_id)
 
 
 async def process_text_question(

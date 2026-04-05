@@ -63,36 +63,6 @@
             font-size: 0.95rem;
         }
 
-        .api-key-row {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            margin-bottom: 1rem;
-        }
-
-        .api-key-row label {
-            margin-bottom: 0;
-            white-space: nowrap;
-            font-size: 0.875rem;
-            color: #6b7280;
-            font-weight: 500;
-        }
-
-        .api-key-row input[type="password"] {
-            flex: 1;
-            padding: 0.5rem 0.875rem;
-            border: 1.5px solid #d1d5db;
-            border-radius: 8px;
-            font-size: 0.9rem;
-            outline: none;
-            transition: border-color 0.2s;
-            font-family: monospace;
-        }
-
-        .api-key-row input[type="password"]:focus {
-            border-color: #0f3460;
-        }
-
         .input-row {
             display: flex;
             gap: 0.75rem;
@@ -214,9 +184,25 @@
             line-height: 1.6;
         }
 
+        .source-title {
+            font-weight: 600;
+            color: #111827;
+        }
+
+        .source-excerpt {
+            margin-top: 0.45rem;
+            color: #374151;
+            white-space: pre-wrap;
+        }
+
         .source-item .source-meta {
             margin-top: 0.5rem;
             font-size: 0.75rem;
+            color: #6b7280;
+        }
+
+        .source-empty {
+            font-size: 0.875rem;
             color: #6b7280;
         }
 
@@ -263,6 +249,119 @@
             font-weight: 600;
             margin-bottom: 0.75rem;
             color: #374151;
+        }
+
+        .auth-card {
+            background: #fff;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        }
+
+        .auth-card p {
+            margin-top: 0.5rem;
+            color: #4b5563;
+            line-height: 1.6;
+        }
+
+        .auth-layout {
+            display: grid;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .auth-panel {
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 1rem;
+            background: #f9fafb;
+        }
+
+        .auth-panel h3 {
+            font-size: 0.95rem;
+            margin-bottom: 0.5rem;
+            color: #0f3460;
+        }
+
+        .auth-panel p {
+            margin-top: 0;
+            font-size: 0.9rem;
+        }
+
+        .auth-form,
+        .invite-form {
+            margin-top: 1rem;
+            display: grid;
+            gap: 0.75rem;
+        }
+
+        .auth-form input[type="password"],
+        .auth-form input[type="text"],
+        .auth-form input[type="number"],
+        .invite-form input[type="text"],
+        .invite-form input[type="number"] {
+            padding: 0.75rem 1rem;
+            border: 1.5px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 1rem;
+            outline: none;
+        }
+
+        .auth-form button,
+        .invite-form button,
+        .logout-form button {
+            padding: 0.75rem 1.25rem;
+            background: #0f3460;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+        }
+
+        .session-banner {
+            margin-bottom: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .session-banner p {
+            color: #374151;
+            font-size: 0.9rem;
+        }
+
+        .success-msg {
+            background: #ecfdf5;
+            color: #065f46;
+            border: 1px solid #a7f3d0;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+        }
+
+        .invite-code-card {
+            margin-top: 1rem;
+            padding: 1rem;
+            border-radius: 10px;
+            background: #111827;
+            color: #f9fafb;
+        }
+
+        .invite-code-card code {
+            display: block;
+            margin-top: 0.5rem;
+            font-size: 1rem;
+            word-break: break-all;
+        }
+
+        .logout-form {
+            display: flex;
+            justify-content: flex-end;
         }
 
         .history-item {
@@ -321,23 +420,155 @@
 </header>
 
 <main>
-    <div class="question-card">
-        <div class="api-key-row">
-            <label for="api-key-input">API Key</label>
+    {% if not authenticated %}
+    <div class="auth-card">
+        <h2>Web Access</h2>
+        <p>Веб-доступ теперь работает через bootstrap-admin, обычных web-пользователей и одноразовые invite-коды. Backend `API_KEY` в браузер не передается.</p>
+        {% if error_message %}
+        <div class="error-msg visible">{{ error_message }}</div>
+        {% endif %}
+        {% if success_message %}
+        <div class="success-msg">{{ success_message }}</div>
+        {% endif %}
+
+        <div class="auth-layout">
+        {% if not admin_exists %}
+            <div class="auth-panel">
+                <h3>Bootstrap Admin</h3>
+                {% if bootstrap_enabled %}
+                <p>Первый администратор создается через bootstrap token, который выдает оператор сервера.</p>
+                <form class="auth-form" method="post" action="/web/bootstrap">
+                    <input
+                        type="text"
+                        name="bootstrap_token"
+                        placeholder="Bootstrap token"
+                        autocomplete="one-time-code"
+                        required
+                    />
+                    <input
+                        type="text"
+                        name="username"
+                        placeholder="Admin username"
+                        autocomplete="username"
+                        required
+                    />
+                    <input
+                        type="password"
+                        name="password"
+                        placeholder="Admin password"
+                        autocomplete="new-password"
+                        required
+                    />
+                    <button type="submit">Create admin</button>
+                </form>
+                {% else %}
+                <p>Bootstrap еще не включен. Администратор сервера должен задать `WEB_BOOTSTRAP_ADMIN_TOKEN`.</p>
+                {% endif %}
+            </div>
+        {% else %}
+            <div class="auth-panel">
+                <h3>Sign In</h3>
+                <p>Используйте выданные web-учетные данные.</p>
+                <form class="auth-form" method="post" action="/web/login">
+                    <input
+                        type="text"
+                        name="username"
+                        placeholder="Username"
+                        autocomplete="username"
+                        required
+                    />
+                    <input
+                        type="password"
+                        name="password"
+                        placeholder="Password"
+                        autocomplete="current-password"
+                        required
+                    />
+                    <button type="submit">Sign in</button>
+                </form>
+            </div>
+
+            <div class="auth-panel">
+                <h3>Activate Invite</h3>
+                <p>Если вам выдали invite-код, активируйте его и сразу создайте собственную web-учетную запись.</p>
+                <form class="auth-form" method="post" action="/web/invite/accept">
+                    <input
+                        type="text"
+                        name="invite_code"
+                        placeholder="Invite code"
+                        autocomplete="one-time-code"
+                        required
+                    />
+                    <input
+                        type="text"
+                        name="username"
+                        placeholder="New username"
+                        autocomplete="username"
+                        required
+                    />
+                    <input
+                        type="password"
+                        name="password"
+                        placeholder="New password"
+                        autocomplete="new-password"
+                        required
+                    />
+                    <button type="submit">Activate access</button>
+                </form>
+            </div>
+        {% endif %}
+        </div>
+    </div>
+    {% else %}
+    <div class="session-banner">
+        <p>Signed in as <strong>{{ current_user.username }}</strong>{% if is_admin %} (admin){% endif %}</p>
+        <form class="logout-form" method="post" action="/web/logout">
+            <button type="submit">Sign out</button>
+        </form>
+    </div>
+    {% if error_message %}
+    <div class="error-msg visible">{{ error_message }}</div>
+    {% endif %}
+    {% if success_message %}
+    <div class="success-msg">{{ success_message }}</div>
+    {% endif %}
+    {% if is_admin %}
+    <div class="auth-card" style="margin-bottom: 1.5rem;">
+        <h2>Invite Users</h2>
+        <p>Создавайте одноразовые invite-коды для новых web-пользователей.</p>
+        <form class="invite-form" method="post" action="/web/admin/invites">
             <input
-                type="password"
-                id="api-key-input"
-                placeholder="Leave empty if not required"
+                type="text"
+                name="recipient_label"
+                placeholder="Кому выдается код, например ivan.petrov"
                 autocomplete="off"
             />
+            <input
+                type="number"
+                name="expires_in_hours"
+                min="1"
+                max="720"
+                value="72"
+                required
+            />
+            <button type="submit">Create invite code</button>
+        </form>
+        {% if invite_code %}
+        <div class="invite-code-card">
+            <strong>One-time invite code</strong>
+            <code id="invite-code">{{ invite_code }}</code>
         </div>
+        {% endif %}
+    </div>
+    {% endif %}
+    <div class="question-card">
         <label for="question-input">Your question</label>
         <form id="ask-form" class="input-row">
             <input
                 type="text"
                 id="question-input"
                 name="question"
-                placeholder="e.g. What are the exam retake dates?"
+                placeholder="Например: когда пересдача и где смотреть расписание?"
                 autocomplete="off"
                 required
             />
@@ -353,12 +584,14 @@
             <div class="answer-text" id="answer-text"></div>
             <div class="meta-bar" id="meta-bar"></div>
 
+            {% if show_sources %}
             <div class="sources-section">
                 <button class="sources-toggle" id="sources-toggle" type="button">
                     Show sources
                 </button>
                 <div class="sources-list" id="sources-list"></div>
             </div>
+            {% endif %}
         </div>
     </div>
 
@@ -366,6 +599,7 @@
         <h3>Previous questions</h3>
         <div id="history-list"></div>
     </div>
+    {% endif %}
 </main>
 
 <footer>
@@ -373,27 +607,30 @@
 </footer>
 
 <script>
+    {% if authenticated %}
     const form = document.getElementById("ask-form");
     const input = document.getElementById("question-input");
-    const apiKeyInput = document.getElementById("api-key-input");
     const submitBtn = document.getElementById("submit-btn");
     const answerSection = document.getElementById("answer-section");
     const answerText = document.getElementById("answer-text");
     const metaBar = document.getElementById("meta-bar");
-    const sourcesList = document.getElementById("sources-list");
-    const sourcesToggle = document.getElementById("sources-toggle");
+    const showSourcesEnabled = {{ show_sources|tojson }};
+    const sourcesList = showSourcesEnabled ? document.getElementById("sources-list") : null;
+    const sourcesToggle = showSourcesEnabled ? document.getElementById("sources-toggle") : null;
     const errorMsg = document.getElementById("error-msg");
     const historySection = document.getElementById("history-section");
     const historyList = document.getElementById("history-list");
 
     const history = [];
 
-    sourcesToggle.addEventListener("click", () => {
-        sourcesList.classList.toggle("open");
-        sourcesToggle.textContent = sourcesList.classList.contains("open")
-            ? "Hide sources"
-            : "Show sources";
-    });
+    if (showSourcesEnabled) {
+        sourcesToggle.addEventListener("click", () => {
+            sourcesList.classList.toggle("open");
+            sourcesToggle.textContent = sourcesList.classList.contains("open")
+                ? "Hide sources"
+                : "Show sources";
+        });
+    }
 
     form.addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -403,21 +640,21 @@
         // Reset UI
         errorMsg.classList.remove("visible");
         answerSection.classList.remove("visible");
-        sourcesList.classList.remove("open");
-        sourcesToggle.textContent = "Show sources";
+        if (showSourcesEnabled) {
+            sourcesList.classList.remove("open");
+            sourcesToggle.textContent = "Show sources";
+        }
 
         // Loading state
         submitBtn.disabled = true;
         submitBtn.innerHTML = '<span class="spinner"></span>Thinking...';
 
         try {
-            const apiKey = apiKeyInput.value.trim();
-            const headers = { "Content-Type": "application/json" };
-            if (apiKey) headers["X-API-Key"] = apiKey;
-
-            const res = await fetch("/ask", {
+            const res = await fetch("/web/ask", {
                 method: "POST",
-                headers,
+                headers: {
+                    "Content-Type": "application/json",
+                },
                 body: JSON.stringify({ question }),
             });
 
@@ -442,7 +679,7 @@
             if (meta.embedding_model) {
                 metaBar.innerHTML += `<span>Embeddings: ${escapeHtml(meta.embedding_model)}</span>`;
             }
-            if (meta.num_sources !== undefined) {
+            if (showSourcesEnabled && meta.num_sources !== undefined) {
                 metaBar.innerHTML += `<span>Sources used: ${meta.num_sources}</span>`;
             }
             if (meta.confidence !== undefined) {
@@ -455,21 +692,31 @@
                 metaBar.innerHTML += `<span>Total: ${meta.total_time_ms} ms</span>`;
             }
 
-            // Sources
-            sourcesList.innerHTML = "";
-            const sources = data.sources || [];
-            sources.forEach((src, i) => {
-                const item = document.createElement("div");
-                item.className = "source-item";
-                item.innerHTML = `${escapeHtml(src.content)}`;
-                if (src.metadata && Object.keys(src.metadata).length > 0) {
-                    const metaStr = Object.entries(src.metadata)
-                        .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(String(v))}`)
-                        .join(" | ");
-                    item.innerHTML += `<div class="source-meta">${metaStr}</div>`;
+            if (showSourcesEnabled) {
+                // Sources
+                sourcesList.innerHTML = "";
+                const sources = data.sources || [];
+                if (sources.length === 0) {
+                    sourcesToggle.disabled = true;
+                    sourcesList.innerHTML = '<div class="source-empty">No sources were attached to this answer.</div>';
+                } else {
+                    sourcesToggle.disabled = false;
                 }
-                sourcesList.appendChild(item);
-            });
+                sources.forEach((src, i) => {
+                    const item = document.createElement("div");
+                    item.className = "source-item";
+                    const title = formatSourceTitle(src, i + 1);
+                    item.innerHTML = `
+                        <div class="source-title">${i + 1}. ${escapeHtml(title)}</div>
+                        <div class="source-excerpt">${escapeHtml(formatSourceExcerpt(src.content))}</div>
+                    `;
+                    const metaStr = formatSourceMeta(src.metadata, title);
+                    if (metaStr) {
+                        item.innerHTML += `<div class="source-meta">${metaStr}</div>`;
+                    }
+                    sourcesList.appendChild(item);
+                });
+            }
 
             answerSection.classList.add("visible");
 
@@ -496,6 +743,58 @@
         return div.innerHTML;
     }
 
+    function humanizeSourceLabel(value) {
+        if (!value) return "";
+        let candidate = String(value).trim();
+        if (!candidate) return "";
+        candidate = candidate.replace(/\\/g, "/").split("/").pop() || candidate;
+        for (const extension of [".pdf", ".docx", ".txt", ".html", ".htm"]) {
+            if (candidate.toLowerCase().endsWith(extension)) {
+                candidate = candidate.slice(0, -extension.length);
+                break;
+            }
+        }
+        candidate = candidate.replace(/[-_\s]+/gu, " ").replace(/^[ ._-]+|[ ._-]+$/gu, "");
+        return candidate || String(value).trim();
+    }
+
+    function formatSourceTitle(source, index) {
+        const metadata = source.metadata || {};
+        return (
+            humanizeSourceLabel(metadata.title) ||
+            humanizeSourceLabel(metadata.source) ||
+            humanizeSourceLabel(source.content?.split("\n")[0]) ||
+            `Источник ${index}`
+        );
+    }
+
+    function formatSourceMeta(metadata, title) {
+        if (!metadata || typeof metadata !== "object") {
+            return "";
+        }
+
+        const parts = [];
+        const page = metadata.page;
+        if (page !== undefined && page !== null && String(page).trim() !== "") {
+            parts.push(`Стр. ${escapeHtml(String(page))}`);
+        }
+
+        const sourcePath = metadata.source ? String(metadata.source).trim() : "";
+        const humanizedPath = humanizeSourceLabel(sourcePath);
+        if (sourcePath && humanizedPath && humanizedPath !== title) {
+            parts.push(escapeHtml(sourcePath));
+        }
+
+        return parts.join(" | ");
+    }
+
+    function formatSourceExcerpt(content) {
+        const text = String(content || "").trim();
+        if (!text) return "Источник доступен без фрагмента текста.";
+        if (text.length <= 320) return text;
+        return `${text.slice(0, 317).trimEnd()}...`;
+    }
+
     function renderHistory() {
         if (history.length === 0) {
             historySection.style.display = "none";
@@ -517,6 +816,7 @@
             historyList.appendChild(el);
         });
     }
+    {% endif %}
 </script>
 
 </body>

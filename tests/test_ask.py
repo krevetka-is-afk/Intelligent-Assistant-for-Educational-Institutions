@@ -1,10 +1,26 @@
-from langchain_core.documents import Document
+import asyncio
+import re
 
+import pytest
+from langchain_core.documents import Document
+from starlette.testclient import TestClient
+
+from src.server.app.main import app, conversation_memory_store
 from src.server.app.rag import RAGResponse
 from src.server.app.vector import EmptyVectorStoreError
 
 
-async def _fake_ask_question(question: str) -> RAGResponse:
+@pytest.fixture(autouse=True)
+def reset_conversation_memory_store():
+    asyncio.run(conversation_memory_store.clear_all())
+    yield
+    asyncio.run(conversation_memory_store.clear_all())
+
+
+async def _fake_ask_question(
+    question: str, conversation_history: list[str] | None = None
+) -> RAGResponse:
+    del conversation_history
     assert question == "Hello world"
     return RAGResponse(
         answer="Ответ найден.",
@@ -41,10 +57,26 @@ async def _fake_ask_question(question: str) -> RAGResponse:
     )
 
 
-def test_ask_returns_compatible_contract(client, auth_headers, monkeypatch):
+def _bootstrap_admin(client, bootstrap_token: str):
+    return client.post(
+        "/web/bootstrap",
+        data={
+            "bootstrap_token": bootstrap_token,
+            "username": "admin",
+            "password": "admin-password",
+        },
+        follow_redirects=False,
+    )
+
+
+def test_ask_returns_compatible_contract(client, monkeypatch):
     monkeypatch.setattr("src.server.app.main.ask_question", _fake_ask_question)
 
-    response = client.post("/ask", json={"question": "Hello world"}, headers=auth_headers)
+    response = client.post(
+        "/ask",
+        json={"question": "Hello world"},
+        headers={"X-API-Key": "test-api-key"},
+    )
 
     assert response.status_code == 200
     assert response.json() == {
@@ -76,14 +108,367 @@ def test_ask_rejects_empty_question(client, auth_headers):
     assert response.json() == {"error": "Question must be a non-empty string"}
 
 
-async def _raise_empty_index(question: str) -> RAGResponse:
+async def _raise_empty_index(
+    question: str, conversation_history: list[str] | None = None
+) -> RAGResponse:
+    del question, conversation_history
     raise EmptyVectorStoreError("Vector index is empty. Run indexing first.")
 
 
 def test_ask_returns_503_for_empty_index(client, auth_headers, monkeypatch):
     monkeypatch.setattr("src.server.app.main.ask_question", _raise_empty_index)
 
-    response = client.post("/ask", json={"question": "Hello world"}, headers=auth_headers)
+    response = client.post(
+        "/ask",
+        json={"question": "Hello world"},
+        headers={"X-API-Key": "test-api-key"},
+    )
 
     assert response.status_code == 503
-    assert response.json() == {"error": "Vector index is empty. Run indexing first."}
+    assert response.json() == {
+        "error": "Vector index is empty. Run indexing first.",
+        "code": "vector_index_empty",
+    }
+
+
+def test_ask_returns_401_without_api_key(client):
+    response = client.post("/ask", json={"question": "Hello world"})
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Unauthorized"}
+
+
+def test_ask_returns_401_with_invalid_api_key(client):
+    response = client.post("/ask", json={"question": "Hello world"}, headers={"X-API-Key": "wrong"})
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Unauthorized"}
+
+
+def test_web_ask_requires_authentication(client, monkeypatch):
+    monkeypatch.setattr("src.server.app.main.ask_question", _fake_ask_question)
+
+    response = client.post("/web/ask", json={"question": "Hello world"})
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Unauthorized"}
+
+
+def test_web_login_requires_bootstrap_completion(client):
+    response = client.post(
+        "/web/login",
+        data={"username": "admin", "password": "admin-password"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 503
+
+
+def test_web_bootstrap_rejects_invalid_token(client):
+    response = client.post(
+        "/web/bootstrap",
+        data={
+            "bootstrap_token": "wrong-token",
+            "username": "admin",
+            "password": "admin-password",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 401
+    assert "Неверный bootstrap token." in response.text
+
+
+def test_web_bootstrap_creates_admin_session(client, bootstrap_token):
+    response = _bootstrap_admin(client, bootstrap_token)
+
+    assert response.status_code == 303
+    assert "web_session=" in response.headers["set-cookie"]
+
+    page = client.get("/web")
+    assert page.status_code == 200
+    assert "Signed in as <strong>admin</strong> (admin)" in page.text
+
+
+def test_web_ask_accepts_authenticated_web_session(client, monkeypatch, bootstrap_token):
+    monkeypatch.setattr("src.server.app.main.ask_question", _fake_ask_question)
+    bootstrap_response = _bootstrap_admin(client, bootstrap_token)
+    assert bootstrap_response.status_code == 303
+
+    response = client.post("/web/ask", json={"question": "Hello world"})
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "Ответ найден."
+
+
+def test_web_page_hides_sources_ui_when_disabled(client, monkeypatch, bootstrap_token):
+    monkeypatch.setattr("src.server.app.main.config.SHOW_SOURCES", False)
+
+    bootstrap_response = _bootstrap_admin(client, bootstrap_token)
+    assert bootstrap_response.status_code == 303
+
+    page = client.get("/web")
+
+    assert page.status_code == 200
+    assert 'id="sources-toggle"' not in page.text
+    assert "const showSourcesEnabled = false;" in page.text
+
+
+def test_web_ask_keeps_sources_in_json_when_ui_disabled(client, monkeypatch, bootstrap_token):
+    monkeypatch.setattr("src.server.app.main.ask_question", _fake_ask_question)
+    monkeypatch.setattr("src.server.app.main.config.SHOW_SOURCES", False)
+
+    bootstrap_response = _bootstrap_admin(client, bootstrap_token)
+    assert bootstrap_response.status_code == 303
+
+    response = client.post("/web/ask", json={"question": "Hello world"})
+
+    assert response.status_code == 200
+    assert response.json()["sources"] == [
+        {
+            "content": "Расписание пересдач опубликовано на портале.",
+            "metadata": {"title": "faq", "source": "faq", "page": 2, "chunk_index": 0},
+        }
+    ]
+
+
+def test_web_invite_activation_creates_user_session(client, monkeypatch, bootstrap_token):
+    monkeypatch.setattr("src.server.app.main.ask_question", _fake_ask_question)
+    bootstrap_response = _bootstrap_admin(client, bootstrap_token)
+    assert bootstrap_response.status_code == 303
+
+    invite_response = client.post(
+        "/web/admin/invites",
+        data={"recipient_label": "ivan.petrov", "expires_in_hours": 24},
+    )
+    assert invite_response.status_code == 200
+    invite_code_match = re.search(r'<code id="invite-code">([^<]+)</code>', invite_response.text)
+    assert invite_code_match is not None
+    invite_code = invite_code_match.group(1)
+
+    with TestClient(app) as invited_client:
+        accept_response = invited_client.post(
+            "/web/invite/accept",
+            data={
+                "invite_code": invite_code,
+                "username": "ivan.petrov",
+                "password": "invite-password",
+            },
+            follow_redirects=False,
+        )
+        assert accept_response.status_code == 303
+        assert "web_session=" in accept_response.headers["set-cookie"]
+
+        ask_response = invited_client.post("/web/ask", json={"question": "Hello world"})
+        assert ask_response.status_code == 200
+        assert ask_response.json()["answer"] == "Ответ найден."
+
+
+def test_non_admin_cannot_create_invites(client, bootstrap_token):
+    bootstrap_response = _bootstrap_admin(client, bootstrap_token)
+    assert bootstrap_response.status_code == 303
+
+    invite_response = client.post(
+        "/web/admin/invites",
+        data={"recipient_label": "ivan.petrov", "expires_in_hours": 24},
+    )
+    invite_code_match = re.search(r'<code id="invite-code">([^<]+)</code>', invite_response.text)
+    assert invite_code_match is not None
+    invite_code = invite_code_match.group(1)
+
+    with TestClient(app) as invited_client:
+        accept_response = invited_client.post(
+            "/web/invite/accept",
+            data={
+                "invite_code": invite_code,
+                "username": "ivan.petrov",
+                "password": "invite-password",
+            },
+            follow_redirects=False,
+        )
+        assert accept_response.status_code == 303
+
+        forbidden_response = invited_client.post(
+            "/web/admin/invites",
+            data={"recipient_label": "petr", "expires_in_hours": 24},
+        )
+        assert forbidden_response.status_code == 403
+        assert "Только администратор может создавать инвайты." in forbidden_response.text
+
+
+def test_web_logout_invalidates_session(client, monkeypatch, bootstrap_token):
+    monkeypatch.setattr("src.server.app.main.ask_question", _fake_ask_question)
+    bootstrap_response = _bootstrap_admin(client, bootstrap_token)
+    assert bootstrap_response.status_code == 303
+
+    logout_response = client.post("/web/logout", follow_redirects=False)
+
+    assert logout_response.status_code == 303
+
+    response = client.post("/web/ask", json={"question": "Hello world"})
+
+    assert response.status_code == 401
+
+
+def test_web_ask_accepts_api_key(client, monkeypatch, auth_headers):
+    monkeypatch.setattr("src.server.app.main.ask_question", _fake_ask_question)
+
+    response = client.post("/web/ask", json={"question": "Hello world"}, headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "Ответ найден."
+
+
+def test_ask_rejects_malformed_json(client, auth_headers):
+    response = client.post(
+        "/ask",
+        content='{"question": ',
+        headers={**auth_headers, "Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "Invalid JSON in request body"}
+
+
+def test_ask_rejects_invalid_session_id_without_exception_details(client, auth_headers):
+    response = client.post(
+        "/ask",
+        json={"question": "Hello world", "session_id": {"unexpected": "object"}},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": "session_id must be a non-empty string up to 128 characters"
+    }
+
+
+def test_ask_session_memory_keeps_last_five_messages(client, auth_headers, monkeypatch):
+    captured_histories: list[list[str]] = []
+
+    async def _capture_ask(
+        question: str, conversation_history: list[str] | None = None
+    ) -> RAGResponse:
+        captured_histories.append(list(conversation_history or []))
+        return RAGResponse(
+            answer=f"Ответ на {question}",
+            sources=[],
+            metadata={
+                "model": "mistral:7b",
+                "embedding_model": "cointegrated/rubert-tiny2",
+                "num_sources": 0,
+                "confidence": 0.0,
+                "fallback_used": False,
+                "fallback_reason": None,
+                "retrieval_time_ms": 1,
+                "generation_time_ms": 1,
+                "total_time_ms": 2,
+            },
+            retrieved_documents=[],
+        )
+
+    monkeypatch.setattr("src.server.app.main.ask_question", _capture_ask)
+
+    for index in range(1, 8):
+        response = client.post(
+            "/ask",
+            json={"question": f"Q{index}", "session_id": "tg:42"},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+
+    assert captured_histories == [
+        [],
+        ["Q1"],
+        ["Q1", "Q2"],
+        ["Q1", "Q2", "Q3"],
+        ["Q1", "Q2", "Q3", "Q4"],
+        ["Q1", "Q2", "Q3", "Q4", "Q5"],
+        ["Q2", "Q3", "Q4", "Q5", "Q6"],
+    ]
+
+
+def test_ask_session_memory_isolated_by_session_id(client, auth_headers, monkeypatch):
+    observed: dict[str, list[str]] = {}
+
+    async def _capture_ask(
+        question: str, conversation_history: list[str] | None = None
+    ) -> RAGResponse:
+        observed[question] = list(conversation_history or [])
+        return RAGResponse(
+            answer="ok",
+            sources=[],
+            metadata={
+                "model": "mistral:7b",
+                "embedding_model": "cointegrated/rubert-tiny2",
+                "num_sources": 0,
+                "confidence": 0.0,
+                "fallback_used": False,
+                "fallback_reason": None,
+                "retrieval_time_ms": 1,
+                "generation_time_ms": 1,
+                "total_time_ms": 2,
+            },
+            retrieved_documents=[],
+        )
+
+    monkeypatch.setattr("src.server.app.main.ask_question", _capture_ask)
+
+    first_a = client.post(
+        "/ask",
+        json={"question": "A1", "session_id": "session-a"},
+        headers=auth_headers,
+    )
+    first_b = client.post(
+        "/ask",
+        json={"question": "B1", "session_id": "session-b"},
+        headers=auth_headers,
+    )
+    second_a = client.post(
+        "/ask",
+        json={"question": "A2", "session_id": "session-a"},
+        headers=auth_headers,
+    )
+
+    assert first_a.status_code == 200
+    assert first_b.status_code == 200
+    assert second_a.status_code == 200
+    assert observed["A1"] == []
+    assert observed["B1"] == []
+    assert observed["A2"] == ["A1"]
+
+
+def test_web_ask_uses_web_user_memory_key(client, monkeypatch, bootstrap_token):
+    captured_histories: list[list[str]] = []
+
+    async def _capture_ask(
+        question: str, conversation_history: list[str] | None = None
+    ) -> RAGResponse:
+        captured_histories.append(list(conversation_history or []))
+        return RAGResponse(
+            answer=f"ok: {question}",
+            sources=[],
+            metadata={
+                "model": "mistral:7b",
+                "embedding_model": "cointegrated/rubert-tiny2",
+                "num_sources": 0,
+                "confidence": 0.0,
+                "fallback_used": False,
+                "fallback_reason": None,
+                "retrieval_time_ms": 1,
+                "generation_time_ms": 1,
+                "total_time_ms": 2,
+            },
+            retrieved_documents=[],
+        )
+
+    monkeypatch.setattr("src.server.app.main.ask_question", _capture_ask)
+    bootstrap_response = _bootstrap_admin(client, bootstrap_token)
+    assert bootstrap_response.status_code == 303
+
+    first = client.post("/web/ask", json={"question": "Первый вопрос"})
+    second = client.post("/web/ask", json={"question": "Второй вопрос"})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert captured_histories == [[], ["Первый вопрос"]]

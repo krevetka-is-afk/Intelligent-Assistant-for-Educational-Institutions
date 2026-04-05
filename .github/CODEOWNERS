@@ -1,1 +1,26 @@
-* @krevetka-is-afk
+# Default for unassigned areas
+* @Sasha-A4
+
+# Backend
+/src/server/ @krevetka-is-afk
+/src/bot/ @krevetka-is-afk
+/tests/ @krevetka-is-afk
+/scripts/ @krevetka-is-afk
+
+# Frontend
+/src/client/ @lvfky
+/src/bot/ @lvfky
+/src/server/templates/ @lvfky
+
+# Shared infra / repo-level
+/docker-compose.yaml @krevetka-is-afk @Sasha-A4
+/Dockerfile @krevetka-is-afk @Sasha-A4
+/pyproject.toml @krevetka-is-afk @Sasha-A4
+/.env.example @krevetka-is-afk @Sasha-A4
+/README.md @krevetka-is-afk @lvfky @Sasha-A4
+
+# CI / governance
+/.github/workflows/ @Sasha-A4 @krevetka-is-afk
+/.github/ISSUE_TEMPLATE/ @Sasha-A4
+/security/ @Sasha-A4 @krevetka-is-afk
+/docs/technical-specification-for-IAfEI/ @Sasha-A4

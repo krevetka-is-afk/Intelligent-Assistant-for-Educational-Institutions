@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama.llms import OllamaLLM
+
+from app_runtime import log_extra
 
 from . import config
 from .vector import RetrievedDocument, similarity_search
@@ -25,6 +28,7 @@ _ALLOWED_METADATA_KEYS = {
 }
 
 _llm_chain = None
+logger = logging.getLogger("server.rag")
 
 
 @dataclass(slots=True)
@@ -116,12 +120,36 @@ def build_context(retrieved_documents: list[RetrievedDocument]) -> str:
     return "\n\n".join(context_parts)
 
 
-def invoke_llm(question: str, retrieved_documents: list[RetrievedDocument]) -> str:
+def build_conversation_history(conversation_history: list[str] | None) -> str:
+    if not conversation_history:
+        return "Нет."
+    return "\n".join(
+        f"{index}. {message}" for index, message in enumerate(conversation_history, start=1)
+    )
+
+
+def build_retrieval_query(question: str, conversation_history: list[str] | None) -> str:
+    if not conversation_history:
+        return question
+
+    # Keep retrieval query compact: only the latest few user turns plus current question.
+    recent_messages = [message.strip() for message in conversation_history[-3:] if message.strip()]
+    if not recent_messages:
+        return question
+    return "\n".join([*recent_messages, question])
+
+
+def invoke_llm(
+    question: str,
+    retrieved_documents: list[RetrievedDocument],
+    conversation_history: list[str] | None = None,
+) -> str:
     chain = _get_llm_chain()
     response = chain.invoke(
         {
             "information": build_context(retrieved_documents),
             "question": question,
+            "conversation_history": build_conversation_history(conversation_history),
         }
     )
     return str(response).strip()
@@ -149,11 +177,16 @@ def build_fallback_answer(retrieved_documents: list[RetrievedDocument]) -> str:
     )
 
 
-async def ask_question(question: str) -> RAGResponse:
+async def ask_question(question: str, conversation_history: list[str] | None = None) -> RAGResponse:
     total_started = perf_counter()
 
+    retrieval_query = build_retrieval_query(question, conversation_history)
     retrieval_started = perf_counter()
-    retrieved_documents = await asyncio.to_thread(similarity_search, question, k=config.RAG_TOP_K)
+    retrieved_documents = await asyncio.to_thread(
+        similarity_search,
+        retrieval_query,
+        k=config.RAG_TOP_K,
+    )
     retrieval_elapsed = perf_counter() - retrieval_started
 
     if not retrieved_documents:
@@ -191,7 +224,7 @@ async def ask_question(question: str) -> RAGResponse:
         generation_started = perf_counter()
         try:
             answer = await asyncio.wait_for(
-                asyncio.to_thread(invoke_llm, question, retrieved_documents),
+                asyncio.to_thread(invoke_llm, question, retrieved_documents, conversation_history),
                 timeout=llm_timeout,
             )
             if not answer:
@@ -199,10 +232,19 @@ async def ask_question(question: str) -> RAGResponse:
         except asyncio.TimeoutError:
             fallback_used = True
             fallback_reason = "llm_timeout"
+            logger.error(
+                "LLM call timed out, switching to fallback",
+                extra=log_extra(stage="llm", error_type="TimeoutError"),
+            )
             answer = build_fallback_answer(retrieved_documents)
-        except Exception:
+        except Exception as exc:
             fallback_used = True
             fallback_reason = "llm_unavailable"
+            logger.error(
+                "LLM call failed, switching to fallback: %s",
+                exc,
+                extra=log_extra(stage="llm", error_type=type(exc).__name__),
+            )
             answer = build_fallback_answer(retrieved_documents)
         finally:
             generation_elapsed = perf_counter() - generation_started

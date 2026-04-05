@@ -1,5 +1,6 @@
 import asyncio
 import importlib
+import json
 
 import httpx
 from sqlalchemy import select
@@ -8,7 +9,10 @@ from sqlalchemy import select
 def _load_bot_modules(monkeypatch, tmp_path):
     db_path = tmp_path / "bot.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv("API_KEY", "bot-test-api-key")
+    monkeypatch.setenv("API_BASE_URL", "http://test")
 
+    importlib.reload(importlib.import_module("src.bot.core.config"))
     database = importlib.import_module("src.bot.core.database")
     database = importlib.reload(database)
     crud = importlib.import_module("src.bot.core.crud")
@@ -27,6 +31,7 @@ def test_ask_api_client_accepts_answer_only(monkeypatch, tmp_path):
 
     async def scenario():
         async def handler(request: httpx.Request) -> httpx.Response:
+            assert request.headers["X-API-Key"] == "bot-test-api-key"
             return httpx.Response(
                 200,
                 json={
@@ -44,6 +49,84 @@ def test_ask_api_client_accepts_answer_only(monkeypatch, tmp_path):
         assert result.sources[0].content == "Документ"
         assert result.sources[0].metadata == {"page": 7}
         assert result.metadata == {}
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
+
+
+def test_ask_api_client_sends_optional_session_id(monkeypatch, tmp_path):
+    database, _, api_client, _, _ = _load_bot_modules(monkeypatch, tmp_path)
+
+    async def scenario():
+        async def handler(request: httpx.Request) -> httpx.Response:
+            assert request.headers["X-API-Key"] == "bot-test-api-key"
+            assert json.loads(request.content.decode("utf-8")) == {
+                "question": "question",
+                "session_id": "tg:101",
+            }
+            return httpx.Response(200, json={"answer": "ok", "sources": [], "metadata": {}})
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            client = api_client.AskAPIClient(base_url="http://test", client=http_client)
+            result = await client.ask("question", session_id="tg:101")
+
+        assert result.answer == "ok"
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
+
+
+def test_ask_api_client_raises_unauthorized(monkeypatch, tmp_path):
+    database, _, api_client, _, _ = _load_bot_modules(monkeypatch, tmp_path)
+
+    async def scenario():
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401, json={"error": "Unauthorized"})
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            client = api_client.AskAPIClient(base_url="http://test", client=http_client)
+            try:
+                await client.ask("question")
+            except api_client.AskAPIUnauthorizedError:
+                return
+        raise AssertionError("AskAPIUnauthorizedError was not raised")
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
+
+
+def test_ask_api_client_extracts_service_error_details(monkeypatch, tmp_path):
+    database, _, api_client, _, _ = _load_bot_modules(monkeypatch, tmp_path)
+
+    async def scenario():
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                503,
+                json={
+                    "error": "Vector index is empty. Run indexing first.",
+                    "code": "vector_index_empty",
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            client = api_client.AskAPIClient(base_url="http://test", client=http_client)
+            try:
+                await client.ask("question")
+            except api_client.AskAPIUnavailableError as exc:
+                assert exc.status_code == 503
+                assert exc.error_code == "vector_index_empty"
+                assert exc.server_message == "Vector index is empty. Run indexing first."
+                return
+        raise AssertionError("AskAPIUnavailableError was not raised")
 
     try:
         asyncio.run(scenario())
@@ -142,6 +225,43 @@ def test_process_text_question_handles_timeout(monkeypatch, tmp_path, caplog):
     assert "Timed out while processing question" in caplog.text
 
 
+def test_process_text_question_passes_session_id(monkeypatch, tmp_path):
+    database, _, api_client, service, _ = _load_bot_modules(monkeypatch, tmp_path)
+
+    class _FakeAPIClient:
+        async def ask(self, question: str, session_id: str | None = None):
+            assert question == "Когда дедлайн?"
+            assert session_id == "tg:101"
+            return api_client.AskResult(
+                answer="Дедлайн указан в LMS.",
+                sources=[],
+                metadata={"confidence": 0.82, "fallback_used": False},
+            )
+
+    async def scenario():
+        await database.init_db()
+        sent_messages: list[str] = []
+
+        async def send_reply(text: str) -> None:
+            sent_messages.append(text)
+
+        reply = await service.process_text_question(
+            telegram_id=101,
+            username="student",
+            question="Когда дедлайн?",
+            send_reply=send_reply,
+            api_client=_FakeAPIClient(),
+        )
+
+        assert reply.message == "Дедлайн указан в LMS.\n\nУверенность: 0.82"
+        assert sent_messages == [reply.message]
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
+
+
 def test_process_text_question_handles_api_unavailable(monkeypatch, tmp_path, caplog):
     database, _, _, service, models = _load_bot_modules(monkeypatch, tmp_path)
     service.logger.propagate = True
@@ -179,6 +299,92 @@ def test_process_text_question_handles_api_unavailable(monkeypatch, tmp_path, ca
         asyncio.run(database.engine.dispose())
 
     assert "API unavailable while processing question" in caplog.text
+
+
+def test_process_text_question_handles_empty_index_without_stacktrace(
+    monkeypatch, tmp_path, caplog
+):
+    database, _, _, service, models = _load_bot_modules(monkeypatch, tmp_path)
+    service.logger.propagate = True
+
+    class _UnavailableAPIClient:
+        async def ask(self, question: str):
+            raise service.AskAPIUnavailableError(
+                "API is unavailable",
+                status_code=503,
+                error_code="vector_index_empty",
+                server_message="Vector index is empty. Run indexing first.",
+            )
+
+    async def scenario():
+        await database.init_db()
+        sent_messages: list[str] = []
+
+        async def send_reply(text: str) -> None:
+            sent_messages.append(text)
+
+        await service.process_text_question(
+            telegram_id=304,
+            username="student",
+            question="Когда будет ответ?",
+            send_reply=send_reply,
+            api_client=_UnavailableAPIClient(),
+        )
+
+        async with database.async_session_factory() as session:
+            stored_request = await session.scalar(select(models.Request))
+
+        assert stored_request is not None
+        assert stored_request.ai_response == service.EMPTY_INDEX_REPLY_TEXT
+        assert sent_messages == [service.EMPTY_INDEX_REPLY_TEXT]
+
+    try:
+        with caplog.at_level("WARNING", logger="bot.service"):
+            asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
+
+    assert "API unavailable while processing question" in caplog.text
+    assert "Traceback" not in caplog.text
+
+
+def test_process_text_question_handles_api_unauthorized(monkeypatch, tmp_path, caplog):
+    database, _, _, service, models = _load_bot_modules(monkeypatch, tmp_path)
+    service.logger.propagate = True
+
+    class _UnauthorizedAPIClient:
+        async def ask(self, question: str):
+            raise service.AskAPIUnauthorizedError("unauthorized")
+
+    async def scenario():
+        await database.init_db()
+        sent_messages: list[str] = []
+
+        async def send_reply(text: str) -> None:
+            sent_messages.append(text)
+
+        await service.process_text_question(
+            telegram_id=909,
+            username="student",
+            question="Есть ли доступ?",
+            send_reply=send_reply,
+            api_client=_UnauthorizedAPIClient(),
+        )
+
+        async with database.async_session_factory() as session:
+            stored_request = await session.scalar(select(models.Request))
+
+        assert stored_request is not None
+        assert stored_request.ai_response == service.UNAUTHORIZED_REPLY_TEXT
+        assert sent_messages == [service.UNAUTHORIZED_REPLY_TEXT]
+
+    try:
+        with caplog.at_level("ERROR", logger="bot.service"):
+            asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
+
+    assert "API rejected bot credentials" in caplog.text
 
 
 def test_process_question_saves_image_content_type(monkeypatch, tmp_path):
@@ -267,3 +473,68 @@ def test_format_sources_list_deduplicates_title_and_page(monkeypatch, tmp_path):
 
     assert sources_block == "Источники:\n1. Положение, стр. 5\n2. Справка, стр. 8"
     asyncio.run(database.engine.dispose())
+
+
+def test_format_sources_list_humanizes_file_names(monkeypatch, tmp_path):
+    database, _, api_client, service, _ = _load_bot_modules(monkeypatch, tmp_path)
+
+    sources = [
+        api_client.AskSource(
+            content="Doc 1",
+            metadata={"source": "student_handbook/basic/Beginning_of_studies_at_HSE_Moscow.docx"},
+        )
+    ]
+
+    sources_block = service._format_sources_list(sources)
+
+    assert sources_block == "Источники:\n1. Beginning of studies at HSE Moscow"
+    asyncio.run(database.engine.dispose())
+
+
+def test_process_text_question_hides_sources_when_disabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("SHOW_SOURCES", "0")
+    database, _, api_client, service, models = _load_bot_modules(monkeypatch, tmp_path)
+
+    class _FakeAPIClient:
+        async def ask(self, question: str):
+            assert question == "Когда дедлайн?"
+            return api_client.AskResult(
+                answer="Дедлайн указан в LMS.",
+                sources=[
+                    api_client.AskSource(
+                        content="LMS",
+                        metadata={"title": "Портал LMS", "page": 3, "source": "portal"},
+                    )
+                ],
+                metadata={"confidence": 0.82, "fallback_used": False},
+            )
+
+    async def scenario():
+        await database.init_db()
+        sent_messages: list[str] = []
+
+        async def send_reply(text: str) -> None:
+            sent_messages.append(text)
+
+        reply = await service.process_text_question(
+            telegram_id=111,
+            username="student",
+            question="Когда дедлайн?",
+            send_reply=send_reply,
+            api_client=_FakeAPIClient(),
+        )
+
+        async with database.async_session_factory() as session:
+            stored_request = await session.scalar(select(models.Request))
+
+        expected_message = "Дедлайн указан в LMS.\n\nУверенность: 0.82"
+        assert reply.message == expected_message
+        assert reply.sources == []
+        assert sent_messages == [expected_message]
+        assert stored_request is not None
+        assert stored_request.ai_response == expected_message
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
