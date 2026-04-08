@@ -205,8 +205,8 @@ async def handle_text(message: types.Message, state: FSMContext) -> None:
     if not question:
         await message.answer("Вопрос не может быть пустым. Попробуй снова.")
         return
-    await state.clear()
     await send_answer(message, question, "text", raw_content=question)
+    await state.set_state(QuestionStates.waiting_for_content)
 
 
 @router.message(QuestionStates.waiting_for_content, F.photo)
@@ -287,17 +287,17 @@ async def cb_confirm_yes(callback: types.CallbackQuery, state: FSMContext) -> No
     question = data.get("pending_question", "")
     raw_content = data.get("raw_content")
     content_type = data.get("content_type", "text")
-    await state.clear()
 
     await callback.answer()
     await send_answer(callback.message, question, content_type, raw_content=raw_content)
+    await state.set_state(QuestionStates.waiting_for_content)
 
 
 @router.callback_query(QuestionStates.awaiting_confirmation, F.data == "confirm_no")
 async def cb_confirm_no(callback: types.CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
     await callback.message.answer(
         "Хорошо, отправь материал ещё раз или задай вопрос текстом.",
         reply_markup=back_keyboard(),
     )
+    await state.set_state(QuestionStates.waiting_for_content)
     await callback.answer()
