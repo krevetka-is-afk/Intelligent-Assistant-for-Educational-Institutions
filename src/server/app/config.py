@@ -78,6 +78,13 @@ def resolve_sqlite_path_from_url(database_url: str) -> Path | None:
     return None
 
 
+def _resolve_lexical_db_path() -> Path:
+    configured = getenv("RAG_LEXICAL_DB_PATH")
+    if configured is None:
+        return (VECTOR_DB_DIR / "rag_lexical.db").resolve()
+    return Path(configured).expanduser().resolve()
+
+
 def _resolve_default_web_auth_db_url() -> str:
     if _is_running_in_container():
         return f"sqlite+aiosqlite:///{DOCKER_WEB_AUTH_DB_PATH.as_posix()}"
@@ -131,6 +138,9 @@ HF_EMBEDDING_MODEL = (
 )
 LLM_MODEL = getenv("LLM_MODEL", "mistral:7b") or "mistral:7b"
 RAG_TOP_K = int(getenv("RAG_TOP_K", "4") or "4")
+RAG_HYBRID_DENSE_TOP_K = int(getenv("RAG_HYBRID_DENSE_TOP_K", "12") or "12")
+RAG_HYBRID_LEXICAL_TOP_K = int(getenv("RAG_HYBRID_LEXICAL_TOP_K", "12") or "12")
+RAG_HYBRID_RRF_K = int(getenv("RAG_HYBRID_RRF_K", "60") or "60")
 RAG_TOTAL_TIMEOUT_SECONDS = float(getenv("RAG_TOTAL_TIMEOUT_SECONDS", "20") or "20")
 LLM_TIMEOUT_SECONDS = float(getenv("LLM_TIMEOUT_SECONDS", "18") or "18")
 CONVERSATION_MEMORY_WINDOW = int(getenv("CONVERSATION_MEMORY_WINDOW", "5") or "5")
@@ -138,8 +148,9 @@ CONVERSATION_MEMORY_TTL_SECONDS = float(getenv("CONVERSATION_MEMORY_TTL_SECONDS"
 CONVERSATION_MEMORY_MAX_SESSIONS = int(
     getenv("CONVERSATION_MEMORY_MAX_SESSIONS", "10000") or "10000"
 )
-CHUNK_SIZE = int(getenv("RAG_CHUNK_SIZE", "500") or "500")
-CHUNK_OVERLAP = int(getenv("RAG_CHUNK_OVERLAP", "100") or "100")
+CHUNK_SIZE = int(getenv("RAG_CHUNK_SIZE", "1200") or "1200")
+CHUNK_OVERLAP = int(getenv("RAG_CHUNK_OVERLAP", "200") or "200")
+RAG_LEXICAL_DB_PATH = _resolve_lexical_db_path()
 PREPARE_RAG_ON_STARTUP = _get_bool_env("PREPARE_RAG_ON_STARTUP", True)
 AUTO_INDEX_ON_STARTUP = _get_bool_env("AUTO_INDEX_ON_STARTUP", True)
 SHOW_SOURCES = _get_bool_env("SHOW_SOURCES", True)
@@ -176,6 +187,14 @@ def validate_chunk_settings() -> None:
 def validate_runtime_config() -> None:
     if API_KEY is None:
         raise RuntimeError("API_KEY is not set")
+    if RAG_TOP_K <= 0:
+        raise RuntimeError("RAG_TOP_K must be positive")
+    if RAG_HYBRID_DENSE_TOP_K <= 0:
+        raise RuntimeError("RAG_HYBRID_DENSE_TOP_K must be positive")
+    if RAG_HYBRID_LEXICAL_TOP_K <= 0:
+        raise RuntimeError("RAG_HYBRID_LEXICAL_TOP_K must be positive")
+    if RAG_HYBRID_RRF_K <= 0:
+        raise RuntimeError("RAG_HYBRID_RRF_K must be positive")
     if CONVERSATION_MEMORY_WINDOW <= 0:
         raise RuntimeError("CONVERSATION_MEMORY_WINDOW must be positive")
     if CONVERSATION_MEMORY_TTL_SECONDS <= 0:

@@ -16,6 +16,11 @@ from langchain_core.documents import Document
 from pypdf import PdfReader
 
 from . import config
+from .lexical import delete_document_chunks as delete_lexical_document_chunks
+from .lexical import (
+    initialize_lexical_index,
+    upsert_document_chunks,
+)
 from .vector import get_embedding_function
 
 logger = logging.getLogger("server.indexing")
@@ -375,11 +380,19 @@ def _get_indexed_document_ids(vector_store: Chroma) -> set[str]:
 
 
 def _delete_stale_document_chunks(
-    vector_store: Chroma, *, active_document_ids: set[str]
+    vector_store: Chroma, *, active_document_ids: set[str], lexical_enabled: bool
 ) -> list[str]:
     stale_document_ids = sorted(_get_indexed_document_ids(vector_store) - active_document_ids)
     for document_id in stale_document_ids:
         _delete_document_chunks(vector_store, document_id)
+        if lexical_enabled:
+            try:
+                delete_lexical_document_chunks(document_id)
+            except Exception:
+                logger.exception(
+                    "Failed to delete stale lexical chunks for document %s",
+                    document_id,
+                )
     return stale_document_ids
 
 
@@ -425,6 +438,12 @@ def index_directory(
 
     persist_directory.mkdir(parents=True, exist_ok=True)
     vector_store = create_vector_store(persist_directory, collection, rebuild=rebuild)
+    lexical_enabled = True
+    try:
+        initialize_lexical_index(rebuild=rebuild)
+    except Exception:
+        lexical_enabled = False
+        logger.exception("Failed to initialize lexical index; continuing with dense indexing only")
     summary = IndexingSummary()
     indexed_at = datetime.now(UTC).isoformat()
     indexed_paths = _iter_supported_files(input_dir)
@@ -453,6 +472,14 @@ def index_directory(
                 documents=[record.to_document() for record in chunk_records],
                 ids=[record.id for record in chunk_records],
             )
+            if lexical_enabled:
+                try:
+                    upsert_document_chunks(parsed_document.document_id, chunk_records)
+                except Exception:
+                    logger.exception(
+                        "Failed to update lexical index for %s",
+                        path,
+                    )
             summary.indexed_files += 1
             summary.chunks_written += len(chunk_records)
         except DocumentParsingError:
@@ -463,7 +490,9 @@ def index_directory(
             logger.exception("Unexpected indexing failure for %s", path)
 
     stale_document_ids = _delete_stale_document_chunks(
-        vector_store, active_document_ids=active_document_ids
+        vector_store,
+        active_document_ids=active_document_ids,
+        lexical_enabled=lexical_enabled,
     )
     if stale_document_ids:
         logger.info(

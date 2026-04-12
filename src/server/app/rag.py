@@ -12,6 +12,7 @@ from langchain_ollama.llms import OllamaLLM
 from app_runtime import log_extra
 
 from . import config
+from .lexical import lexical_search
 from .vector import RetrievedDocument, similarity_search
 
 _ALLOWED_METADATA_KEYS = {
@@ -29,6 +30,7 @@ _ALLOWED_METADATA_KEYS = {
 
 _llm_chain = None
 logger = logging.getLogger("server.rag")
+RETRIEVAL_HISTORY_WINDOW = 5
 
 
 @dataclass(slots=True)
@@ -132,11 +134,71 @@ def build_retrieval_query(question: str, conversation_history: list[str] | None)
     if not conversation_history:
         return question
 
-    # Keep retrieval query compact: only the latest few user turns plus current question.
-    recent_messages = [message.strip() for message in conversation_history[-3:] if message.strip()]
+    # Keep retrieval query compact while preserving the last five turns for context.
+    recent_messages = [
+        message.strip()
+        for message in conversation_history[-RETRIEVAL_HISTORY_WINDOW:]
+        if message.strip()
+    ]
     if not recent_messages:
         return question
     return "\n".join([*recent_messages, question])
+
+
+def _document_key(retrieved: RetrievedDocument) -> str:
+    metadata = retrieved.document.metadata if isinstance(retrieved.document.metadata, dict) else {}
+    chunk_id = metadata.get("chunk_id")
+    if isinstance(chunk_id, str) and chunk_id.strip():
+        return chunk_id.strip()
+
+    document_id = retrieved.document.id
+    if isinstance(document_id, str) and document_id.strip():
+        return document_id.strip()
+
+    source = metadata.get("source")
+    chunk_index = metadata.get("chunk_index")
+    return f"{source}:{chunk_index}:{retrieved.document.page_content[:128]}"
+
+
+def reciprocal_rank_fusion(
+    dense_documents: list[RetrievedDocument],
+    lexical_documents: list[RetrievedDocument],
+    *,
+    top_k: int,
+    rrf_k: int,
+) -> list[RetrievedDocument]:
+    scores: dict[str, float] = {}
+    best_items: dict[str, RetrievedDocument] = {}
+    best_distances: dict[str, float] = {}
+
+    rankings = (dense_documents, lexical_documents)
+    for ranking in rankings:
+        for rank, item in enumerate(ranking, start=1):
+            key = _document_key(item)
+            scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank)
+            if key not in best_items:
+                best_items[key] = item
+                best_distances[key] = float(item.distance)
+                continue
+
+            if float(item.distance) < best_distances[key]:
+                best_items[key] = item
+                best_distances[key] = float(item.distance)
+
+    if not scores:
+        return []
+
+    ranked_keys = sorted(scores, key=scores.get, reverse=True)
+    merged: list[RetrievedDocument] = []
+    for key in ranked_keys[:top_k]:
+        selected = best_items[key]
+        merged.append(
+            RetrievedDocument(
+                document=selected.document,
+                distance=best_distances[key],
+            )
+        )
+    return merged
 
 
 def invoke_llm(
@@ -181,11 +243,41 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
     total_started = perf_counter()
 
     retrieval_query = build_retrieval_query(question, conversation_history)
+    dense_top_k = max(config.RAG_TOP_K, config.RAG_HYBRID_DENSE_TOP_K)
+    lexical_top_k = max(config.RAG_TOP_K, config.RAG_HYBRID_LEXICAL_TOP_K)
     retrieval_started = perf_counter()
-    retrieved_documents = await asyncio.to_thread(
-        similarity_search,
-        retrieval_query,
-        k=config.RAG_TOP_K,
+    dense_result, lexical_result = await asyncio.gather(
+        asyncio.to_thread(
+            similarity_search,
+            retrieval_query,
+            k=dense_top_k,
+        ),
+        asyncio.to_thread(
+            lexical_search,
+            retrieval_query,
+            k=lexical_top_k,
+        ),
+        return_exceptions=True,
+    )
+    if isinstance(dense_result, BaseException):
+        raise dense_result
+    dense_documents = dense_result
+
+    lexical_documents: list[RetrievedDocument]
+    if isinstance(lexical_result, BaseException):
+        logger.warning(
+            "Lexical retrieval failed, falling back to dense only",
+            extra=log_extra(stage="retrieval", error_type=type(lexical_result).__name__),
+        )
+        lexical_documents = []
+    else:
+        lexical_documents = lexical_result
+
+    retrieved_documents = reciprocal_rank_fusion(
+        dense_documents,
+        lexical_documents,
+        top_k=config.RAG_TOP_K,
+        rrf_k=config.RAG_HYBRID_RRF_K,
     )
     retrieval_elapsed = perf_counter() - retrieval_started
 
@@ -197,6 +289,9 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
             metadata={
                 "model": config.LLM_MODEL,
                 "embedding_model": config.HF_EMBEDDING_MODEL,
+                "retrieval_strategy": "hybrid_rrf",
+                "dense_candidates": len(dense_documents),
+                "lexical_candidates": len(lexical_documents),
                 "num_sources": 0,
                 "confidence": 0.0,
                 "fallback_used": False,
@@ -253,6 +348,9 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
     metadata = {
         "model": config.LLM_MODEL,
         "embedding_model": config.HF_EMBEDDING_MODEL,
+        "retrieval_strategy": "hybrid_rrf",
+        "dense_candidates": len(dense_documents),
+        "lexical_candidates": len(lexical_documents),
         "num_sources": len(sources),
         "confidence": compute_confidence(retrieved_documents, fallback_used=fallback_used),
         "fallback_used": fallback_used,

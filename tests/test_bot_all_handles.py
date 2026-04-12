@@ -165,3 +165,68 @@ def test_send_answer_delegates_to_process_question(monkeypatch):
     }
     assert sent_messages[0][0] == "⏳ Обрабатываю вопрос..."
     assert sent_messages[1][0] == "Ответ для пользователя"
+
+
+def test_handle_text_keeps_waiting_for_content_state(monkeypatch):
+    module = _load_all_handlers_module(monkeypatch)
+    captured = {}
+
+    class _State:
+        async def set_state(self, value):
+            captured["state"] = value
+
+    class _Message:
+        text = "Когда дедлайн подачи документов?"
+
+    async def _fake_send_answer(message, question, content_type, *, raw_content=None):
+        del message
+        captured["question"] = question
+        captured["content_type"] = content_type
+        captured["raw_content"] = raw_content
+
+    monkeypatch.setattr(module, "send_answer", _fake_send_answer)
+
+    asyncio.run(module.handle_text(_Message(), _State()))
+
+    assert captured["question"] == "Когда дедлайн подачи документов?"
+    assert captured["content_type"] == "text"
+    assert captured["raw_content"] == "Когда дедлайн подачи документов?"
+    assert captured["state"] == module.QuestionStates.waiting_for_content
+
+
+def test_confirm_yes_returns_to_waiting_for_content_state(monkeypatch):
+    module = _load_all_handlers_module(monkeypatch)
+    captured = {"callback_answered": False}
+
+    class _State:
+        async def get_data(self):
+            return {
+                "pending_question": "Текст после OCR",
+                "raw_content": "RAW OCR",
+                "content_type": "image",
+            }
+
+        async def set_state(self, value):
+            captured["state"] = value
+
+    class _Callback:
+        message = object()
+
+        async def answer(self):
+            captured["callback_answered"] = True
+
+    async def _fake_send_answer(message, question, content_type, *, raw_content=None):
+        captured["message"] = message
+        captured["question"] = question
+        captured["content_type"] = content_type
+        captured["raw_content"] = raw_content
+
+    monkeypatch.setattr(module, "send_answer", _fake_send_answer)
+
+    asyncio.run(module.cb_confirm_yes(_Callback(), _State()))
+
+    assert captured["callback_answered"] is True
+    assert captured["question"] == "Текст после OCR"
+    assert captured["content_type"] == "image"
+    assert captured["raw_content"] == "RAW OCR"
+    assert captured["state"] == module.QuestionStates.waiting_for_content

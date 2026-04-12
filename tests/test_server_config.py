@@ -75,3 +75,48 @@ def test_show_sources_flag_can_be_disabled(monkeypatch):
     config = _reload_config(monkeypatch, vector_db_dir=None, documents_dir=None)
 
     assert config.SHOW_SOURCES is False
+
+
+def test_validate_runtime_config_accepts_memory_window_below_five(monkeypatch):
+    monkeypatch.setenv("CONVERSATION_MEMORY_WINDOW", "4")
+    config = _reload_config(monkeypatch, vector_db_dir=None, documents_dir=None)
+
+    config.validate_runtime_config()
+
+
+def test_default_chunk_settings_are_increased_for_rag_quality(monkeypatch):
+    config = _reload_config(monkeypatch, vector_db_dir=None, documents_dir=None)
+
+    assert config.CHUNK_SIZE > 500
+    assert config.CHUNK_OVERLAP >= 100
+    assert config.CHUNK_OVERLAP < config.CHUNK_SIZE
+
+
+def test_chunk_settings_can_be_overridden_from_env(monkeypatch):
+    monkeypatch.setenv("RAG_CHUNK_SIZE", "1200")
+    monkeypatch.setenv("RAG_CHUNK_OVERLAP", "180")
+    config = _reload_config(monkeypatch, vector_db_dir=None, documents_dir=None)
+
+    assert config.CHUNK_SIZE == 1200
+    assert config.CHUNK_OVERLAP == 180
+    config.validate_chunk_settings()
+
+
+def test_hybrid_retrieval_settings_are_positive(monkeypatch):
+    monkeypatch.setenv("RAG_HYBRID_DENSE_TOP_K", "12")
+    monkeypatch.setenv("RAG_HYBRID_LEXICAL_TOP_K", "12")
+    monkeypatch.setenv("RAG_HYBRID_RRF_K", "60")
+    config = _reload_config(monkeypatch, vector_db_dir=None, documents_dir=None)
+
+    assert config.RAG_HYBRID_DENSE_TOP_K == 12
+    assert config.RAG_HYBRID_LEXICAL_TOP_K == 12
+    assert config.RAG_HYBRID_RRF_K == 60
+    config.validate_runtime_config()
+
+
+def test_lexical_db_path_can_be_overridden_from_env(monkeypatch, tmp_path):
+    custom_path = tmp_path / "custom_lexical.db"
+    monkeypatch.setenv("RAG_LEXICAL_DB_PATH", str(custom_path))
+    config = _reload_config(monkeypatch, vector_db_dir=None, documents_dir=None)
+
+    assert config.RAG_LEXICAL_DB_PATH == custom_path.resolve()

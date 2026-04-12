@@ -42,8 +42,14 @@
 | `VECTOR_DB_DIR` | `server`, `indexer` | Директория векторной БД |
 | `DOCUMENTS_DIR` | `server`, `indexer` | Каталог корпуса документов |
 | `RAG_TOP_K` | `server` | Сколько чанков доставать из Chroma |
+| `RAG_HYBRID_DENSE_TOP_K` | `server` | Сколько dense-кандидатов брать до fusion |
+| `RAG_HYBRID_LEXICAL_TOP_K` | `server` | Сколько полнотекстовых (FTS) кандидатов брать до fusion |
+| `RAG_HYBRID_RRF_K` | `server` | Параметр `k` в Reciprocal Rank Fusion (вес ранних позиций) |
 | `RAG_TOTAL_TIMEOUT_SECONDS` | `server` | Общий бюджет времени RAG |
 | `LLM_TIMEOUT_SECONDS` | `server` | Таймаут вызова LLM |
+| `RAG_CHUNK_SIZE` | `server`, `indexer` | Размер чанка для индексации документов |
+| `RAG_CHUNK_OVERLAP` | `server`, `indexer` | Перекрытие между соседними чанками |
+| `RAG_LEXICAL_DB_PATH` | `server`, `indexer` | Путь к SQLite FTS5-индексу для полнотекстового поиска |
 | `CONVERSATION_MEMORY_WINDOW` | `server` | Размер окна памяти последних сообщений пользователя (по умолчанию `5`) |
 | `CONVERSATION_MEMORY_TTL_SECONDS` | `server` | TTL контекста диалога в секундах (по умолчанию `3600`) |
 | `CONVERSATION_MEMORY_MAX_SESSIONS` | `server` | Ограничение на число активных сессий контекста |

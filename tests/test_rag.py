@@ -78,36 +78,82 @@ def test_ask_question_returns_fallback_when_llm_fails(monkeypatch):
 
 
 def test_ask_question_uses_conversation_history_in_retrieval_query(monkeypatch):
-    docs = [
+    dense_docs = [
         RetrievedDocument(
             document=Document(page_content="x", metadata={"source": "s"}),
             distance=0.1,
         )
     ]
-    observed: dict[str, str] = {}
+    lexical_docs = [
+        RetrievedDocument(
+            document=Document(page_content="x lexical", metadata={"source": "lex"}),
+            distance=0.2,
+        )
+    ]
+    fused_docs = [
+        RetrievedDocument(
+            document=Document(page_content="x fused", metadata={"source": "fused"}),
+            distance=0.05,
+        )
+    ]
+    observed: dict[str, object] = {}
 
     def _similarity_search(question: str, k: int):
-        observed["query"] = question
-        observed["k"] = str(k)
-        return docs
+        observed["dense_query"] = question
+        observed["dense_k"] = k
+        return dense_docs
+
+    def _lexical_search(question: str, k: int):
+        observed["lexical_query"] = question
+        observed["lexical_k"] = k
+        return lexical_docs
+
+    def _rrf(
+        dense_documents: list[RetrievedDocument],
+        lexical_documents: list[RetrievedDocument],
+        *,
+        top_k: int,
+        rrf_k: int,
+    ):
+        observed["rrf_dense"] = dense_documents
+        observed["rrf_lexical"] = lexical_documents
+        observed["rrf_top_k"] = top_k
+        observed["rrf_k"] = rrf_k
+        return fused_docs
 
     monkeypatch.setattr(rag, "similarity_search", _similarity_search)
+    monkeypatch.setattr(rag, "lexical_search", _lexical_search)
+    monkeypatch.setattr(rag, "reciprocal_rank_fusion", _rrf)
     monkeypatch.setattr(rag, "invoke_llm", lambda question, retrieved_documents, _: "ok")
 
     result = asyncio.run(
         rag.ask_question(
             "А что по дедлайну?",
             conversation_history=[
+                "Я учусь в кампусе Санкт-Петербург",
                 "Я на 2 курсе",
                 "У меня пересдача в июле",
                 "Какие документы нужны?",
                 "И куда нести?",
+                "Можно ли подать онлайн?",
             ],
         )
     )
 
     assert result.answer == "ok"
-    assert observed["k"] == str(rag.config.RAG_TOP_K)
-    assert observed["query"] == (
-        "У меня пересдача в июле\nКакие документы нужны?\nИ куда нести?\nА что по дедлайну?"
+    expected_query = (
+        "Я на 2 курсе\n"
+        "У меня пересдача в июле\n"
+        "Какие документы нужны?\n"
+        "И куда нести?\n"
+        "Можно ли подать онлайн?\n"
+        "А что по дедлайну?"
     )
+    assert observed["dense_query"] == expected_query
+    assert observed["lexical_query"] == expected_query
+    assert observed["dense_k"] == max(rag.config.RAG_TOP_K, rag.config.RAG_HYBRID_DENSE_TOP_K)
+    assert observed["lexical_k"] == max(rag.config.RAG_TOP_K, rag.config.RAG_HYBRID_LEXICAL_TOP_K)
+    assert observed["rrf_dense"] == dense_docs
+    assert observed["rrf_lexical"] == lexical_docs
+    assert observed["rrf_top_k"] == rag.config.RAG_TOP_K
+    assert observed["rrf_k"] == rag.config.RAG_HYBRID_RRF_K

@@ -39,6 +39,7 @@ from .auth_database import dispose_auth_db, init_auth_db
 from .auth_models import WebUser
 from .conversation_memory import ConversationMemoryStore
 from .document_ingestion import IndexingSummary, index_directory
+from .lexical import ensure_lexical_index_populated
 from .metrics import (
     rag_errors_total,
     rag_fallback_total,
@@ -81,8 +82,21 @@ SESSION_ID_MAX_LENGTH = 128
 SESSION_ID_VALIDATION_MESSAGE = (
     f"session_id must be a non-empty string up to {SESSION_ID_MAX_LENGTH} characters"
 )
+MIN_CONVERSATION_MEMORY_WINDOW = 5
+conversation_memory_window = max(config.CONVERSATION_MEMORY_WINDOW, MIN_CONVERSATION_MEMORY_WINDOW)
+if config.CONVERSATION_MEMORY_WINDOW < MIN_CONVERSATION_MEMORY_WINDOW:
+    logger.warning(
+        (
+            "CONVERSATION_MEMORY_WINDOW=%s is below supported minimum %s; "
+            "using effective value %s"
+        ),
+        config.CONVERSATION_MEMORY_WINDOW,
+        MIN_CONVERSATION_MEMORY_WINDOW,
+        conversation_memory_window,
+        extra=log_extra(stage="startup", error_type="conversation_memory_window_adjusted"),
+    )
 conversation_memory_store = ConversationMemoryStore(
-    max_messages=config.CONVERSATION_MEMORY_WINDOW,
+    max_messages=conversation_memory_window,
     ttl_seconds=config.CONVERSATION_MEMORY_TTL_SECONDS,
     max_sessions=config.CONVERSATION_MEMORY_MAX_SESSIONS,
 )
@@ -119,6 +133,19 @@ def _prepare_rag_runtime() -> None:
         chunk_count,
         extra=log_extra(stage="startup"),
     )
+    try:
+        lexical_count = ensure_lexical_index_populated()
+    except Exception:
+        logger.exception(
+            "Failed to prepare lexical index; hybrid retrieval will run in dense-only mode",
+            extra=log_extra(stage="startup", error_type="lexical_index_init_failed"),
+        )
+    else:
+        logger.info(
+            "Lexical index ready with %s indexed chunks",
+            lexical_count,
+            extra=log_extra(stage="startup"),
+        )
 
 
 def _log_startup_indexing_summary(summary: IndexingSummary) -> None:
