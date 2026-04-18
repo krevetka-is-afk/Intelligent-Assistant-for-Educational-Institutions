@@ -73,7 +73,7 @@ COPY --from=build --chown=appuser:appgroup /app /app
 COPY --from=build --chown=appuser:appgroup /_project/src/server /workspace/src/server
 COPY --from=build --chown=appuser:appgroup /_project/data_and_documents /data_and_documents
 COPY --from=build --chown=appuser:appgroup /_project/app_runtime.py /workspace/app_runtime.py
-RUN chmod -R a+rX /app /workspace /data_and_documents
+RUN chmod a+rx /app && chmod -R a+rX /app/bin
 
 WORKDIR /workspace
 # USER appuser # if uncomment cause to fail
