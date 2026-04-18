@@ -1,11 +1,7 @@
-############################
-# Build stage (shared)
-############################
 FROM python:3.12-slim AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential gcc \
  && rm -rf /var/lib/apt/lists/*
@@ -25,10 +21,7 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --no-dev --no-install-project --frozen
 
-# COPY src/server /server
-# COPY src/client /client
 COPY ./src ./src
-COPY ./data_and_documents ./data_and_documents
 COPY ./app_runtime.py ./app_runtime.py
 
 COPY VERSION ./
@@ -37,10 +30,18 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     sed -Ei "s/^(version = \")0\.0\.0(\")$/\1$(cat VERSION)\2/" pyproject.toml && \
     uv sync --no-dev --no-editable --frozen
 
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip uninstall --python /app/bin/python torch torchvision torchaudio 2>/dev/null || true \
+ && find /app/lib/python3.12/site-packages -maxdepth 1 \( -name 'nvidia*' -o -name 'triton*' \) -exec rm -rf {} + 2>/dev/null || true \
+ && uv pip install --python /app/bin/python torch --index-url https://download.pytorch.org/whl/cpu
+RUN rm -rf /app/lib/python3.12/site-packages/torch/include \
+    /app/lib/python3.12/site-packages/torch/test \
+    /app/lib/python3.12/site-packages/torch/share \
+    2>/dev/null || true \
+ && find /app/lib/python3.12/site-packages -depth -type d -name 'tests' -exec rm -rf {} + 2>/dev/null || true \
+ && du -sh /app /app/lib/python3.12/site-packages 2>/dev/null || true
 
-############################
-# Runtime base stage
-############################
+
 FROM python:3.12-slim AS runtime-base
 
 ARG APP_UID=1000
@@ -50,7 +51,6 @@ ENV PATH=/app/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/workspace
 
-# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     tesseract-ocr \
@@ -64,41 +64,31 @@ RUN addgroup --gid ${APP_GID} appgroup && \
       --gid ${APP_GID} \
       --home /app appuser
 
-############################
-# Runtime stage: server
-############################
 FROM runtime-base AS server
 
 COPY --from=build --chown=appuser:appgroup /app /app
 COPY --from=build --chown=appuser:appgroup /_project/src/server /workspace/src/server
-COPY --from=build --chown=appuser:appgroup /_project/data_and_documents /data_and_documents
+RUN mkdir -p /data_and_documents
 COPY --from=build --chown=appuser:appgroup /_project/app_runtime.py /workspace/app_runtime.py
-RUN chmod -R a+rX /app /workspace /data_and_documents
+RUN chmod -R a+rX /workspace
 
 WORKDIR /workspace
-# USER appuser # if uncomment cause to fail
 
 EXPOSE 8000
 
 CMD ["/app/bin/python", "-m", "uvicorn", "src.server.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
-############################
-# Runtime stage: bot
-############################
 FROM runtime-base AS bot
 
 COPY --from=build --chown=appuser:appgroup /app /app
 COPY --from=build --chown=appuser:appgroup /_project/src/bot /workspace/src/bot
 COPY --from=build --chown=appuser:appgroup /_project/app_runtime.py /workspace/app_runtime.py
-RUN chmod -R a+rX /app /workspace
+RUN chmod -R a+rX /workspace
 
 WORKDIR /workspace
 
 CMD ["/app/bin/python", "-m", "src.bot.bot"]
 
-############################
-# Runtime stage: client
-############################
 FROM runtime-base AS client
 
 ENV PATH=/app/bin:$PATH \
@@ -110,10 +100,9 @@ ENV PATH=/app/bin:$PATH \
 COPY --from=build --chown=appuser:appgroup /app /app
 COPY --from=build --chown=appuser:appgroup /_project/src/client /workspace/src/client
 COPY --from=build --chown=appuser:appgroup /_project/app_runtime.py /workspace/app_runtime.py
-RUN chmod -R a+rX /app /workspace
+RUN chmod -R a+rX /workspace
 
 WORKDIR /workspace
-# USER appuser
 
 EXPOSE 8501
 

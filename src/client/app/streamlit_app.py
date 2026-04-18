@@ -12,6 +12,7 @@ setup_logging("client")
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 API_KEY = os.getenv("API_KEY")
 API_URL = f"{API_BASE_URL}/ask"
+ASK_HTTP_TIMEOUT = float(os.getenv("CLIENT_ASK_TIMEOUT_SECONDS", "480") or "480")
 SHOW_SOURCES = (os.getenv("SHOW_SOURCES", "1") or "1").strip().lower() in {
     "1",
     "true",
@@ -148,7 +149,7 @@ def get_response(promt: str):
             url=API_URL,
             json={"question": question},
             headers=headers,
-            timeout=90,
+            timeout=ASK_HTTP_TIMEOUT,
         )
         logger.debug(
             "Server responded with status code %s",

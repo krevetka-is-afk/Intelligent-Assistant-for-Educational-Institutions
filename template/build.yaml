@@ -1,0 +1,114 @@
+spec:
+  inputs:
+    job-prefix:
+      default: ""
+    job-stage:
+      default: build
+    docker-file-path:
+      default: Dockerfile
+    docker-image-name:
+    docker-cli-image:
+      default: "docker:24-cli"
+    docker-dind-image:
+      default: "docker:24-dind"
+
+---
+
+"$[[ inputs.job-prefix ]]build":
+  stage: $[[ inputs.job-stage ]]
+  needs: ["$[[ inputs.job-prefix ]]diff"]
+  image:
+    name: $[[ inputs.docker-cli-image ]]
+  services:
+    - name: $[[ inputs.docker-dind-image ]]
+      alias: docker
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
+    DOCKERFILE_PATH: $[[ inputs.docker-file-path ]]
+    IMAGE_NAME: $[[ inputs.docker-image-name ]]
+  before_script:
+    - export DOCKER_HOST=tcp://docker:2375
+    - |
+      i=0
+      until docker info >/dev/null 2>&1; do
+        i=$((i + 1))
+        if [ "$i" -gt 90 ]; then
+          echo "Docker daemon did not become ready in time." >&2
+          echo "Last docker info:" >&2
+          docker info 2>&1 || true
+          echo >&2
+          echo "Если dind не стартует: в config.toml раннера для [runners.docker] нужно privileged = true" >&2
+          exit 1
+        fi
+        echo "Waiting for Docker daemon..."
+        sleep 2
+      done
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - df -h || true
+    - docker system df || true
+    - docker system prune -af || true
+    - docker pull "${IMAGE_NAME}:server-latest" 2>/dev/null || true
+    - docker pull "${IMAGE_NAME}:bot-latest" 2>/dev/null || true
+    - |
+      export DOCKER_BUILDKIT=1
+      docker build \
+        -f "${CI_PROJECT_DIR}/${DOCKERFILE_PATH}" \
+        --cache-from "${IMAGE_NAME}:server-latest" \
+        --cache-from "${IMAGE_NAME}:bot-latest" \
+        --target server \
+        -t "${IMAGE_NAME}:server-${CI_COMMIT_SHA}" \
+        "${CI_PROJECT_DIR}"
+    - |
+      for attempt in 1 2 3 4 5; do
+        if docker push "${IMAGE_NAME}:server-${CI_COMMIT_SHA}"; then
+          break
+        fi
+        if [ "$attempt" -eq 5 ]; then
+          echo "docker push server failed after 5 attempts (часто 500 у registry — см. логи GitLab/registry)" >&2
+          exit 1
+        fi
+        echo "docker push server: попытка $attempt/5 не удалась, пауза 45 с..."
+        sleep 45
+      done
+    - |
+      export DOCKER_BUILDKIT=1
+      docker build \
+        -f "${CI_PROJECT_DIR}/${DOCKERFILE_PATH}" \
+        --cache-from "${IMAGE_NAME}:server-${CI_COMMIT_SHA}" \
+        --cache-from "${IMAGE_NAME}:server-latest" \
+        --cache-from "${IMAGE_NAME}:bot-latest" \
+        --target bot \
+        -t "${IMAGE_NAME}:bot-${CI_COMMIT_SHA}" \
+        "${CI_PROJECT_DIR}"
+    - |
+      for attempt in 1 2 3 4 5; do
+        if docker push "${IMAGE_NAME}:bot-${CI_COMMIT_SHA}"; then
+          break
+        fi
+        if [ "$attempt" -eq 5 ]; then
+          echo "docker push bot failed after 5 attempts" >&2
+          exit 1
+        fi
+        echo "docker push bot: попытка $attempt/5 не удалась, пауза 45 с..."
+        sleep 45
+      done
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        docker tag "${IMAGE_NAME}:server-${CI_COMMIT_SHA}" "${IMAGE_NAME}:server-latest"
+        for attempt in 1 2 3 4 5; do
+          if docker push "${IMAGE_NAME}:server-latest"; then break; fi
+          if [ "$attempt" -eq 5 ]; then echo "docker push server-latest failed" >&2; exit 1; fi
+          sleep 45
+        done
+        docker tag "${IMAGE_NAME}:bot-${CI_COMMIT_SHA}" "${IMAGE_NAME}:bot-latest"
+        for attempt in 1 2 3 4 5; do
+          if docker push "${IMAGE_NAME}:bot-latest"; then break; fi
+          if [ "$attempt" -eq 5 ]; then echo "docker push bot-latest failed" >&2; exit 1; fi
+          sleep 45
+        done
+      fi
+  rules:
+    - exists:
+        - $[[ inputs.docker-file-path ]]

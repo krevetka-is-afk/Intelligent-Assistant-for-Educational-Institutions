@@ -104,7 +104,9 @@ def _resolve_web_auth_database_url() -> str:
             posix_path = PurePosixPath(raw_path)
             if not posix_path.is_absolute():
                 posix_path = PurePosixPath(DOCKER_WEB_AUTH_DB_PATH.parent.as_posix()) / posix_path
-            return f"{prefix}{posix_path}"
+            # create_async_engine требует sqlite+aiosqlite, а не sqlite:///
+            path_str = posix_path.as_posix()
+            return f"sqlite+aiosqlite:///{path_str}"
 
     resolved_path = resolve_sqlite_path_from_url(configured)
     if resolved_path is None:
@@ -131,8 +133,8 @@ HF_EMBEDDING_MODEL = (
 )
 LLM_MODEL = getenv("LLM_MODEL", "mistral:7b") or "mistral:7b"
 RAG_TOP_K = int(getenv("RAG_TOP_K", "4") or "4")
-RAG_TOTAL_TIMEOUT_SECONDS = float(getenv("RAG_TOTAL_TIMEOUT_SECONDS", "20") or "20")
-LLM_TIMEOUT_SECONDS = float(getenv("LLM_TIMEOUT_SECONDS", "18") or "18")
+RAG_TOTAL_TIMEOUT_SECONDS = float(getenv("RAG_TOTAL_TIMEOUT_SECONDS", "420") or "420")
+LLM_TIMEOUT_SECONDS = float(getenv("LLM_TIMEOUT_SECONDS", "360") or "360")
 CONVERSATION_MEMORY_WINDOW = int(getenv("CONVERSATION_MEMORY_WINDOW", "5") or "5")
 CONVERSATION_MEMORY_TTL_SECONDS = float(getenv("CONVERSATION_MEMORY_TTL_SECONDS", "3600") or "3600")
 CONVERSATION_MEMORY_MAX_SESSIONS = int(

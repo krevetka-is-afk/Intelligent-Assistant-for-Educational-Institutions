@@ -139,10 +139,25 @@ def _log_startup_indexing_summary(summary: IndexingSummary) -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await init_auth_db()
-    await asyncio.to_thread(_prepare_rag_runtime)
+
+    async def _rag_startup_worker() -> None:
+        try:
+            await asyncio.to_thread(_prepare_rag_runtime)
+        except Exception:
+            logger.exception(
+                "RAG startup preparation failed",
+                extra=log_extra(stage="startup", error_type="rag_startup"),
+            )
+
+    rag_task = asyncio.create_task(_rag_startup_worker())
     try:
         yield
     finally:
+        rag_task.cancel()
+        try:
+            await rag_task
+        except asyncio.CancelledError:
+            pass
         await dispose_auth_db()
 
 
@@ -184,9 +199,14 @@ async def handle_unauthorized(_: Request, __: UnauthorizedAPIKeyError) -> JSONRe
     return _error_response("Unauthorized", 401)
 
 
-@app.get("/")
-async def read_root():
-    return {"Hello": "World"}
+@app.get("/", response_class=HTMLResponse)
+async def read_root(request: Request):
+    return await _render_web_page(request)
+
+
+@app.get("/web", response_class=HTMLResponse)
+async def web_interface_redirect(_request: Request):
+    return RedirectResponse(url="/", status_code=307)
 
 
 @app.get("/health")
@@ -205,14 +225,6 @@ async def metrics(x_api_key: str | None = Header(default=None, alias="X-API-Key"
 
     payload, content_type = render_metrics()
     return Response(content=payload, media_type=content_type)
-
-
-@app.get("/web", response_class=HTMLResponse)
-async def web_interface(
-    request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")
-):
-    del x_api_key
-    return await _render_web_page(request)
 
 
 async def verify_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
@@ -376,7 +388,7 @@ async def web_login(
         user_id=user.id,
         user_agent=request.headers.get("user-agent"),
     )
-    response = RedirectResponse(url="/web", status_code=303)
+    response = RedirectResponse(url="/", status_code=303)
     _set_web_session_cookie(response, request, session_token)
     return response
 
@@ -436,7 +448,7 @@ async def web_bootstrap(
         user_id=user.id,
         user_agent=request.headers.get("user-agent"),
     )
-    response = RedirectResponse(url="/web", status_code=303)
+    response = RedirectResponse(url="/", status_code=303)
     _set_web_session_cookie(response, request, session_token)
     return response
 
@@ -480,7 +492,7 @@ async def web_accept_invite(
         user_id=user.id,
         user_agent=request.headers.get("user-agent"),
     )
-    response = RedirectResponse(url="/web", status_code=303)
+    response = RedirectResponse(url="/", status_code=303)
     _set_web_session_cookie(response, request, session_token)
     return response
 
@@ -539,7 +551,7 @@ async def web_logout(request: Request) -> RedirectResponse:
     token = _get_web_session_token(request)
     if token:
         await revoke_session(token)
-    response = RedirectResponse(url="/web", status_code=303)
+    response = RedirectResponse(url="/", status_code=303)
     _clear_web_session_cookie(response)
     return response
 
