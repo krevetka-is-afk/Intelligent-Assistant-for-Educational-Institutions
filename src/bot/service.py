@@ -132,14 +132,16 @@ def _format_answer_metadata(metadata: dict[str, Any]) -> str:
 
 def _build_reply_text(answer: str, sources: list[AskSource], metadata: dict[str, Any]) -> str:
     normalized_answer = answer.strip()
-    metadata_block = _format_answer_metadata(metadata)
-    sources_block = _format_sources_list(sources) if config.SHOW_SOURCES else ""
-    blocks = [normalized_answer]
-    if metadata_block:
-        blocks.append(metadata_block)
-    if sources_block:
-        blocks.append(sources_block)
-    return "\n\n".join(blocks)
+    # Временно отключено: не показывать в Telegram «Уверенность» и «Источники».
+    # metadata_block = _format_answer_metadata(metadata)
+    # sources_block = _format_sources_list(sources) if config.SHOW_SOURCES else ""
+    # blocks = [normalized_answer]
+    # if metadata_block:
+    #     blocks.append(metadata_block)
+    # if sources_block:
+    #     blocks.append(sources_block)
+    # return "\n\n".join(blocks)
+    return normalized_answer
 
 
 def _split_reply_text(text: str, *, max_length: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:

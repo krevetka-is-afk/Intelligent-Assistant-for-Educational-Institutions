@@ -1,0 +1,63 @@
+spec:
+  inputs:
+    job-prefix:
+      default: ""
+    job-environment:
+    docker-container-name:
+---
+
+"$[[ inputs.job-prefix ]]bot-stop-$[[ inputs.job-environment ]]":
+  stage: deploy
+  needs: []
+  image: debian:bookworm-slim
+  variables:
+    DOCKER_CONTAINER_NAME: $[[ inputs.docker-container-name ]]
+    JOB_ENVIRONMENT: $[[ inputs.job-environment ]]
+  before_script:
+    - apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssh-client ca-certificates && rm -rf /var/lib/apt/lists/*
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - |
+      if [ -f "$SSH_PRIVATE_KEY" ]; then
+        cp "$SSH_PRIVATE_KEY" ~/.ssh/ci_deploy_key
+      else
+        printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/ci_deploy_key
+      fi
+    - chmod 600 ~/.ssh/ci_deploy_key
+    - ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+    - export SSH_COMMON_OPTS="-i ${HOME}/.ssh/ci_deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes"
+  script:
+    - REMOTE_BASE="deploy/${DOCKER_CONTAINER_NAME}-${JOB_ENVIRONMENT}"
+    - |
+      ssh $SSH_COMMON_OPTS "$SSH_USER@$SSH_HOST" \
+        "cd \"\$HOME/${REMOTE_BASE}\" && docker compose -p '${DOCKER_CONTAINER_NAME}-${JOB_ENVIRONMENT}' -f compose.yaml stop bot"
+  when: manual
+  rules:
+    - when: manual
+
+"$[[ inputs.job-prefix ]]bot-start-$[[ inputs.job-environment ]]":
+  stage: deploy
+  needs: []
+  image: debian:bookworm-slim
+  variables:
+    DOCKER_CONTAINER_NAME: $[[ inputs.docker-container-name ]]
+    JOB_ENVIRONMENT: $[[ inputs.job-environment ]]
+  before_script:
+    - apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssh-client ca-certificates && rm -rf /var/lib/apt/lists/*
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - |
+      if [ -f "$SSH_PRIVATE_KEY" ]; then
+        cp "$SSH_PRIVATE_KEY" ~/.ssh/ci_deploy_key
+      else
+        printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/ci_deploy_key
+      fi
+    - chmod 600 ~/.ssh/ci_deploy_key
+    - ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+    - export SSH_COMMON_OPTS="-i ${HOME}/.ssh/ci_deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes"
+  script:
+    - REMOTE_BASE="deploy/${DOCKER_CONTAINER_NAME}-${JOB_ENVIRONMENT}"
+    - |
+      ssh $SSH_COMMON_OPTS "$SSH_USER@$SSH_HOST" \
+        "cd \"\$HOME/${REMOTE_BASE}\" && docker compose -p '${DOCKER_CONTAINER_NAME}-${JOB_ENVIRONMENT}' -f compose.yaml start bot"
+  when: manual
+  rules:
+    - when: manual

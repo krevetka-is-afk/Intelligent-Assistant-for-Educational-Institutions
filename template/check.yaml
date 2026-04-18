@@ -1,0 +1,22 @@
+spec:
+  inputs:
+    job-prefix:
+      default: ""
+    job-stage:
+---
+
+"$[[ inputs.job-prefix ]]diff":
+  stage: $[[ inputs.job-stage ]]
+  image:
+    name: alpine/git:latest
+    entrypoint: [""]
+  script:
+    - git fetch origin $CI_DEFAULT_BRANCH
+    - git fetch origin $CI_COMMIT_BRANCH
+    - commits=$(git log remotes/origin/$CI_COMMIT_BRANCH..remotes/origin/$CI_DEFAULT_BRANCH)
+    - |
+      if [ -n "$commits" ]; then
+        echo "$CI_DEFAULT_BRANCH is not merged into $CI_COMMIT_BRANCH";
+        exit 1;
+      fi
+  allow_failure: true

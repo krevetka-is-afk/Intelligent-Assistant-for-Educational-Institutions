@@ -1,0 +1,35 @@
+spec:
+  inputs:
+    job-prefix:
+      default: ""
+    docker-container-name:
+      default: intelligent-assistant
+---
+
+include:
+  - local: template/check.yaml
+    inputs:
+      job-prefix: $[[ inputs.job-prefix ]]
+      job-stage: check
+  - local: template/build.yaml
+    inputs:
+      job-prefix: $[[ inputs.job-prefix ]]
+      job-stage: build
+      docker-file-path: Dockerfile
+      docker-image-name: $CI_REGISTRY_IMAGE
+  - local: template/deploy.yaml
+    inputs:
+      job-prefix: $[[ inputs.job-prefix ]]
+      job-environment: production
+      job-stage: deploy
+      deployment-directory-path: deployment
+      docker-image-name: $CI_REGISTRY_IMAGE
+      docker-image-tag: $CI_COMMIT_SHA
+      docker-container-name: $[[ inputs.docker-container-name ]]
+  - local: template/bot-control.yaml
+    inputs:
+      job-prefix: $[[ inputs.job-prefix ]]
+      job-environment: production
+      docker-container-name: $[[ inputs.docker-container-name ]]
+
+stages: [check, build, deploy]

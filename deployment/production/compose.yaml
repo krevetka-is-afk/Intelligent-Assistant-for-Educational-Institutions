@@ -1,0 +1,81 @@
+# Требуются переменные окружения на ВМ (файл .env рядом с compose или CI DOTENV_FILE):
+# POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD, BOT_TOKEN, API_KEY, APP_ENV, LOG_LEVEL, ...
+# Образы подставляет пайплайн: DOCKER_IMAGE_NAME, DOCKER_IMAGE_TAG (commit SHA).
+
+services:
+  db:
+    image: postgres:16-alpine
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    # $$ → $ в контейнере: pg_isready видит те же POSTGRES_* что и процесс postgres (не подстановка с хоста).
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 60s
+    restart: unless-stopped
+
+  server:
+    image: ${DOCKER_IMAGE_NAME}:server-${DOCKER_IMAGE_TAG}
+    env_file:
+      - .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      VECTOR_DB_DIR: /data
+      DOCUMENTS_DIR: /data_and_documents
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - app-data:/data
+      # Каталог с PDF на хосте (рядом с compose или абсолютный путь); см. DOCUMENTS_HOST_PATH в .env
+      - ${DOCUMENTS_HOST_PATH:-./data_and_documents}:/data_and_documents:ro
+    tmpfs:
+      - /tmp:rw,size=128m
+    restart: unless-stopped
+    # Хост-порт (часто занят 8000): задайте SERVER_PUBLISH_PORT в .env / CI, напр. 8001
+    ports:
+      - "127.0.0.1:${SERVER_PUBLISH_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/app/bin/python",
+          "-c",
+          "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health', timeout=8).read()",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  bot:
+    image: ${DOCKER_IMAGE_NAME}:bot-${DOCKER_IMAGE_TAG}
+    env_file:
+      - .env
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      API_KEY: ${API_KEY}
+      API_BASE_URL: http://server:8000
+      RAG_API_URL: http://server:8000/ask
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      server:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    tmpfs:
+      - /tmp:rw,size=64m
+    restart: unless-stopped
+
+volumes:
+  app-data:
+  pg-data:

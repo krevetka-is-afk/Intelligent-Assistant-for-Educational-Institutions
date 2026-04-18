@@ -18,7 +18,7 @@ DEFAULT_API_BASE_URL = (
 if DEFAULT_API_BASE_URL.endswith("/ask"):
     DEFAULT_API_BASE_URL = DEFAULT_API_BASE_URL[: -len("/ask")]
 DEFAULT_API_KEY = os.getenv("API_KEY")
-DEFAULT_TIMEOUT_SECONDS = 25.0
+DEFAULT_TIMEOUT_SECONDS = float(os.getenv("BOT_API_TIMEOUT_SECONDS", "480") or "480")
 
 
 @dataclass(slots=True)

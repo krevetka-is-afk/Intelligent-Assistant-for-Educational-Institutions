@@ -1,0 +1,70 @@
+spec:
+  inputs:
+    job-prefix:
+      default: ""
+    job-environment:
+    job-stage:
+    deployment-directory-path:
+      default: deployment
+    docker-image-name:
+    docker-image-tag:
+    docker-container-name:
+---
+
+"$[[ inputs.job-prefix ]]deploy-to-$[[ inputs.job-environment ]]":
+  stage: $[[ inputs.job-stage ]]
+  environment: $[[ inputs.job-environment ]]
+  needs: ["$[[ inputs.job-prefix ]]build"]
+  image: debian:bookworm-slim
+  variables:
+    DEPLOYMENT_DIRECTORY_PATH: $[[ inputs.deployment-directory-path ]]
+    DOCKER_IMAGE_NAME: $[[ inputs.docker-image-name ]]
+    DOCKER_IMAGE_TAG: $[[ inputs.docker-image-tag ]]
+    DOCKER_CONTAINER_NAME: $[[ inputs.docker-container-name ]]
+    JOB_ENVIRONMENT: $[[ inputs.job-environment ]]
+  before_script:
+    - apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssh-client rsync bash ca-certificates && rm -rf /var/lib/apt/lists/*
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - |
+      if [ -f "$SSH_PRIVATE_KEY" ]; then
+        cp "$SSH_PRIVATE_KEY" ~/.ssh/ci_deploy_key
+      else
+        printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/ci_deploy_key
+      fi
+    - chmod 600 ~/.ssh/ci_deploy_key
+    - ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+    - export SSH_COMMON_OPTS="-i ${HOME}/.ssh/ci_deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes"
+  script:
+    - cd "$CI_PROJECT_DIR"
+    - REMOTE_BASE="deploy/${DOCKER_CONTAINER_NAME}-${JOB_ENVIRONMENT}"
+    - |
+      if [ -n "${DOTENV_FILE:-}" ] && [ -f "$DOTENV_FILE" ]; then
+        echo "deploy: используется переменная DOTENV_FILE (File)"
+        cp "$DOTENV_FILE" .env.deploy
+      else
+        echo "deploy: сборка .env из CI/CD Variables (см. deployment/production/render-env.sh)"
+        bash deployment/production/render-env.sh
+      fi
+    - chmod 600 .env.deploy
+    - ssh $SSH_COMMON_OPTS "$SSH_USER@$SSH_HOST" "mkdir -p \"\$HOME/${REMOTE_BASE}\""
+    - scp $SSH_COMMON_OPTS "$DEPLOYMENT_DIRECTORY_PATH/$JOB_ENVIRONMENT/compose.yaml" "$SSH_USER@$SSH_HOST:$REMOTE_BASE/compose.yaml"
+    - scp $SSH_COMMON_OPTS .env.deploy "$SSH_USER@$SSH_HOST:$REMOTE_BASE/.env"
+    - |
+      rsync -az \
+        -e "ssh -i ${HOME}/.ssh/ci_deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes" \
+        "${CI_PROJECT_DIR}/data_and_documents/" \
+        "${SSH_USER}@${SSH_HOST}:${REMOTE_BASE}/data_and_documents/"
+    - |
+      if [ -n "${CONFIG:-}" ] && [ -f "$CONFIG" ]; then
+        scp $SSH_COMMON_OPTS "$CONFIG" "$SSH_USER@$SSH_HOST:$REMOTE_BASE/config.yml"
+      fi
+    - |
+      ssh $SSH_COMMON_OPTS "$SSH_USER@$SSH_HOST" \
+        "cd \"\$HOME/${REMOTE_BASE}\" && \
+        export DOCKER_IMAGE_NAME='${DOCKER_IMAGE_NAME}' DOCKER_IMAGE_TAG='${DOCKER_IMAGE_TAG}' && \
+        echo '${CI_REGISTRY_PASSWORD}' | docker login -u '${CI_REGISTRY_USER}' --password-stdin '${CI_REGISTRY}' && \
+        docker compose -p '${DOCKER_CONTAINER_NAME}-${JOB_ENVIRONMENT}' -f compose.yaml pull && \
+        docker compose -p '${DOCKER_CONTAINER_NAME}-${JOB_ENVIRONMENT}' -f compose.yaml up -d --remove-orphans"
+  when: manual
+  rules:
+    - when: manual

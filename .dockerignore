@@ -11,3 +11,5 @@ build/
 .vscode
 coverage.xml
 reports/
+# Документы не в образе: монтируются на ВМ (compose), иначе CI/dind переполняется.
+data_and_documents/
