@@ -1,0 +1,53 @@
+Рабочие заметки для генератора term-paper.
+
+Источник правды для документации: ТЗ из docs/technical-specification-for-IAfEI/,
+код в src/, docker-compose.yaml, deployment/production/compose.yaml и tests/.
+Разделы ПЗ, ПМИ и РО должны использовать ТЗ как источник формальных требований,
+а код и контракты — как источник проверяемых технических деталей.
+
+Проект: Разработка интеллектуального ассистента для образовательных учреждений.
+English: Development of an Intelligent Assistant for Educational Institutions.
+
+Команда:
+- А. К. Соколова (БПИ235) — сбор, очистка и структурирование данных университета.
+- С. Е. Растворов (БПИ236) — ядро RAG/LLM: векторная БД, RAG-пайплайн, FastAPI API, метрики.
+- Л. А. Субботин (БПИ244) — интерфейсы (Telegram-бот, Streamlit), тестирование с пользователями.
+
+Реализованный scope:
+- FastAPI RAG-сервер (src/server/): эндпоинт /ask, управление диалогом, метрики.
+- RAG-пайплайн (src/server/app/rag.py): поиск релевантных фрагментов + генерация LLM.
+- Векторное хранилище ChromaDB (src/server/app/vector.py) с эмбеддингами ruBERT-tiny2.
+- Индексация документов (src/server/app/index_documents.py, document_ingestion.py):
+  PDF/HTML/TXT → чанки → эмбеддинги → ChromaDB.
+- LLM-интеграция (Ollama/Mistral) через LangChain (src/server/app/rag.py).
+- Лексический резервный поиск (src/server/app/lexical.py) при недоступности LLM.
+- История диалогов (src/server/app/conversation_memory.py) с хранением в PostgreSQL.
+- Аутентификация по токену (src/server/app/auth_*.py): роли пользователь/администратор.
+- Метрики (src/server/app/metrics.py): время ответа, confidence, доля эскалаций.
+- Telegram-бот aiogram 3.x (src/bot/): обработчики, клавиатура, history, OCR-файлы.
+- Streamlit веб-клиент (src/client/app/streamlit_app.py): диалоговый интерфейс.
+- Контейнеризация Docker Compose (docker-compose.yaml, deployment/production/compose.yaml).
+
+Ключевые API маршруты:
+- POST /ask — основной RAG-эндпоинт, принимает вопрос, возвращает ответ + источники.
+- GET /health — healthcheck сервиса.
+- POST /index — запуск индексации нового корпуса документов.
+- GET /metrics — текущие метрики качества.
+
+Ограничения и уточнения:
+- Основной режим работы — локальный Ollama/Mistral; при недоступности — lexical fallback.
+- Векторная БД (ChromaDB) хранится на диске; пересборка не прерывает сервис.
+- Персональные данные ограничены Telegram ID; соблюдается локальная политика ПДн.
+- Release gate: pytest + uv-linters.sh; docker-compose up —проверка smoke-эндпоинтов.
+- Тестирование: test_ask.py, test_rag.py, test_document_ingestion.py, test_bot_*.py.
+
+Аналоги для ПЗ:
+- Официальные ответы НИУ ВШЭ (FAQ) — https://www.hse.ru/answers
+- ChatGPT — универсальный LLM без контекста документов
+- YandexGPT — универсальный LLM без внутренних документов вуза
+
+Рекомендуемая формулировка архитектуры:
+FastAPI RAG-сервер как центральный компонент; ChromaDB + ruBERT-tiny2 для семантического
+поиска; Ollama/Mistral для генерации ответов с цитированием источников; Telegram-бот и
+Streamlit как клиентские интерфейсы; PostgreSQL для хранения диалогов и пользователей;
+Docker Compose для изолированного развёртывания.
