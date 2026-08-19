@@ -1,0 +1,142 @@
+{
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/server/app/metrics.py": {
+    "mtime": 1774700317.7743733,
+    "ast_hash": "fe2caecd03fe1ef0702242f81fdece16",
+    "semantic_hash": "fe2caecd03fe1ef0702242f81fdece16"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/server/app/vector.py": {
+    "mtime": 1774890766.8220778,
+    "ast_hash": "3ed08dcf69a130ef8077390264a8ad9a",
+    "semantic_hash": "3ed08dcf69a130ef8077390264a8ad9a"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/server/app/config.py": {
+    "mtime": 1776933740.8408456,
+    "ast_hash": "265280de0c0392094749cbafd31d121e",
+    "semantic_hash": "265280de0c0392094749cbafd31d121e"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/server/app/document_ingestion.py": {
+    "mtime": 1776504016.0015059,
+    "ast_hash": "71976f623fa0cd17fd54ed2be765b9ec",
+    "semantic_hash": "71976f623fa0cd17fd54ed2be765b9ec"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/server/app/auth_models.py": {
+    "mtime": 1775507325.1398451,
+    "ast_hash": "09343d0a324b37703edf210035c08b73",
+    "semantic_hash": "09343d0a324b37703edf210035c08b73"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/server/app/auth_database.py": {
+    "mtime": 1774890766.8205802,
+    "ast_hash": "1b8ad1ae5a75b6e47458e1e78b2efe5a",
+    "semantic_hash": "1b8ad1ae5a75b6e47458e1e78b2efe5a"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/server/app/__init__.py": {
+    "mtime": 1770195843.6593356,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/server/app/auth_crud.py": {
+    "mtime": 1774890766.820421,
+    "ast_hash": "9742e98938dc43e30e6078c94e3c9ed4",
+    "semantic_hash": "9742e98938dc43e30e6078c94e3c9ed4"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/server/app/rag.py": {
+    "mtime": 1776504016.0038607,
+    "ast_hash": "4d15133c2af20e648246db5d5087f6a6",
+    "semantic_hash": "4d15133c2af20e648246db5d5087f6a6"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/server/app/index_documents.py": {
+    "mtime": 1774890766.8212843,
+    "ast_hash": "4461cea429f091ebbc1a13795571c194",
+    "semantic_hash": "4461cea429f091ebbc1a13795571c194"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/server/app/main.py": {
+    "mtime": 1776933740.8411157,
+    "ast_hash": "58ef82ab51b8b81ef3786cf869e3e3e5",
+    "semantic_hash": "58ef82ab51b8b81ef3786cf869e3e3e5"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/server/app/conversation_memory.py": {
+    "mtime": 1775507325.1434515,
+    "ast_hash": "722c120bfd7aec621bd7fd774349ecde",
+    "semantic_hash": "722c120bfd7aec621bd7fd774349ecde"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/server/data/__init__.py": {
+    "mtime": 1770195843.6644754,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/bot/service.py": {
+    "mtime": 1776933740.8394313,
+    "ast_hash": "2a510a67ae42f69d84e7e453bee260ec",
+    "semantic_hash": "2a510a67ae42f69d84e7e453bee260ec"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/bot/__init__.py": {
+    "mtime": 1774002299.4224753,
+    "ast_hash": "f60ac20fab15b0b8102f5408adfe573e",
+    "semantic_hash": "f60ac20fab15b0b8102f5408adfe573e"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/bot/bot.py": {
+    "mtime": 1774890766.818904,
+    "ast_hash": "40a8e690b8c46049f351c0c30934d0a0",
+    "semantic_hash": "40a8e690b8c46049f351c0c30934d0a0"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/bot/api_client.py": {
+    "mtime": 1776933740.838401,
+    "ast_hash": "1a0eb6ae991474f7e7cc5e5e45565e4d",
+    "semantic_hash": "1a0eb6ae991474f7e7cc5e5e45565e4d"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/bot/core/config.py": {
+    "mtime": 1774890766.819121,
+    "ast_hash": "a3306f9e2ca7d20daba055caae7704f8",
+    "semantic_hash": "a3306f9e2ca7d20daba055caae7704f8"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/bot/core/models.py": {
+    "mtime": 1774002299.4236681,
+    "ast_hash": "9e5c4ebd600b0f1a97733147bb5d43fa",
+    "semantic_hash": "9e5c4ebd600b0f1a97733147bb5d43fa"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/bot/core/database.py": {
+    "mtime": 1774002299.4234433,
+    "ast_hash": "c0c2c576e1c467937eeeb7ca527767f2",
+    "semantic_hash": "c0c2c576e1c467937eeeb7ca527767f2"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/bot/core/__init__.py": {
+    "mtime": 1774002299.4230225,
+    "ast_hash": "b9b804de65a6946bec36a88a3d0ff041",
+    "semantic_hash": "b9b804de65a6946bec36a88a3d0ff041"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/bot/core/crud.py": {
+    "mtime": 1774700317.7718961,
+    "ast_hash": "2d70e76c1a3a82734bc03f0cabc094e8",
+    "semantic_hash": "2d70e76c1a3a82734bc03f0cabc094e8"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/bot/handlers/all_handlers.py": {
+    "mtime": 1776504015.996131,
+    "ast_hash": "417771061ab0d685fc2a2b323ae33763",
+    "semantic_hash": "417771061ab0d685fc2a2b323ae33763"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/bot/handlers/__init__.py": {
+    "mtime": 1774002299.4239092,
+    "ast_hash": "70e2b69795490ace7e2e37fb09b50e03",
+    "semantic_hash": "70e2b69795490ace7e2e37fb09b50e03"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/bot/handlers/common.py": {
+    "mtime": 1774890766.8196938,
+    "ast_hash": "ba0966411f64a49d1153c88d5ed73c4e",
+    "semantic_hash": "ba0966411f64a49d1153c88d5ed73c4e"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/client/app/__init__.py": {
+    "mtime": 1770195843.6591196,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/client/app/streamlit_app.py": {
+    "mtime": 1776933740.840128,
+    "ast_hash": "9158522de9fcd050ce1b57bdffc00452",
+    "semantic_hash": "9158522de9fcd050ce1b57bdffc00452"
+  },
+  "/Users/sergejrastvorov/Documents/\u041a\u0443\u0440\u0441\u043e\u0432\u044b\u0435/\u041a\u0443\u0440\u0441\u043e\u0432\u0430\u044f-\u0418\u0423\u041f/Intelligent-Assistant-for-Educational-Institutions/src/server/templates/index.html": {
+    "mtime": 1775507325.1475022,
+    "ast_hash": "2dba7dd914fef01fd0e06cef0ff9ed7e",
+    "semantic_hash": "2dba7dd914fef01fd0e06cef0ff9ed7e"
+  }
+}
