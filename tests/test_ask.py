@@ -142,6 +142,74 @@ def test_ask_rejects_invalid_question_before_rag(client, auth_headers, monkeypat
     assert rag_calls == []
 
 
+@pytest.mark.parametrize(
+    "question",
+    [
+        " " + "a" * 501 + " ",
+        "a" * 501,
+    ],
+    ids=["trim-over-limit", "over-limit"],
+)
+def test_ask_rejects_question_length_over_limit_before_rag(
+    client, auth_headers, monkeypatch, question
+):
+    rag_calls = []
+
+    async def unexpected_rag_call(question, conversation_history=None):
+        rag_calls.append(question)
+        raise AssertionError("Invalid input must not reach RAG")
+
+    monkeypatch.setattr("src.server.app.main.ask_question", unexpected_rag_call)
+
+    response = client.post("/ask", json={"question": question}, headers=auth_headers)
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "Question must not exceed 500 characters"}
+    assert rag_calls == []
+
+
+@pytest.mark.parametrize(
+    ("question", "expected_question"),
+    [
+        ("a" * 499, "a" * 499),
+        ("a" * 500, "a" * 500),
+        (" " + "a" * 500 + " ", "a" * 500),
+    ],
+    ids=["bellow-limit", "at-limit", "trim-before-limit"],
+)
+def test_ask_accepts_question_length_boundary(
+    client, auth_headers, monkeypatch, question, expected_question
+):
+    rag_calls = []
+
+    async def capture_question(question, conversation_history=None):
+        rag_calls.append(question)
+        return RAGResponse(
+            answer="test-answer",
+            sources=[],
+            metadata={
+                "model": "test",
+                "embedding_model": "test",
+                "num_sources": 0,
+                "confidence": 0.0,
+                "fallback_used": False,
+                "fallback_reason": None,
+                "retrieval_time_ms": 0,
+                "generation_time_ms": 0,
+                "total_time_ms": 0,
+            },
+            retrieved_documents=[],
+        )
+
+    monkeypatch.setattr("src.server.app.main.ask_question", capture_question)
+
+    response = client.post("/ask", json={"question": question}, headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "test-answer"
+    assert rag_calls == [expected_question]
+
+
 async def _raise_empty_index(
     question: str, conversation_history: list[str] | None = None
 ) -> RAGResponse:
