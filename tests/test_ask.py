@@ -108,6 +108,40 @@ def test_ask_rejects_empty_question(client, auth_headers):
     assert response.json() == {"error": "Question must be a non-empty string"}
 
 
+@pytest.mark.parametrize(
+    "question",
+    [
+        " ",
+        "",
+        "\n\t",
+        None,
+        123,
+        [],
+        {},
+    ],
+)
+def test_ask_rejects_invalid_question_before_rag(client, auth_headers, monkeypatch, question):
+    rag_calls = []
+
+    async def unexpected_rag_call(question, conversation_history=None):
+        rag_calls.append(question)
+        raise AssertionError("Invalid input must not reach RAG")
+
+    monkeypatch.setattr("src.server.app.main.ask_question", unexpected_rag_call)
+
+    response = client.post(
+        "/ask",
+        json={
+            "question": question,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "Question must be a non-empty string"}
+    assert rag_calls == []
+
+
 async def _raise_empty_index(
     question: str, conversation_history: list[str] | None = None
 ) -> RAGResponse:
