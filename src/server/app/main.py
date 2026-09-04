@@ -48,6 +48,7 @@ from .metrics import (
     rag_total_seconds,
     render_metrics,
 )
+from .question_validation import QuestionValidationError, normalize_question
 from .rag import ask_question
 from .vector import (
     EmptyVectorStoreError,
@@ -595,33 +596,19 @@ async def _parse_question(
     if not isinstance(data, dict):
         return _error_response("Invalid JSON in request body", 400)
 
-    question = data.get("question")
-    if not question or not isinstance(question, str):
+    try:
+        question = normalize_question(data.get("question"))
+    except QuestionValidationError as exc:
         logger.warning(
-            "Missing or invalid question",
+            "Question validation failed",
             extra=log_extra(
                 request_id=request_id,
                 endpoint=endpoint,
                 stage="validation",
-                error_type="invalid_question",
+                error_type=exc.code,
             ),
         )
-        return _error_response("Question must be a non-empty string", 400)
-
-    question = question.strip()
-    if not question:
-        return _error_response("Question must be a non-empty string", 400)
-    if len(question) > 500:
-        logger.warning(
-            "Question exceeds maximum length",
-            extra=log_extra(
-                request_id=request_id,
-                endpoint=endpoint,
-                stage="validation",
-                error_type="question_too_long",
-            ),
-        )
-        return _error_response("Question must not exceed 500 characters", 400)
+        return _error_response(str(exc), 400)
 
     try:
         session_id = _normalize_session_id(data.get("session_id"))
