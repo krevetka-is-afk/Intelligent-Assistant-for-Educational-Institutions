@@ -175,7 +175,7 @@ def test_ask_rejects_question_length_over_limit_before_rag(
         ("a" * 500, "a" * 500),
         (" " + "a" * 500 + " ", "a" * 500),
     ],
-    ids=["bellow-limit", "at-limit", "trim-before-limit"],
+    ids=["below-limit", "at-limit", "trim-before-limit"],
 )
 def test_ask_accepts_question_length_boundary(
     client, auth_headers, monkeypatch, question, expected_question
