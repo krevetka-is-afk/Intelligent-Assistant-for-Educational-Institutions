@@ -12,7 +12,7 @@ class QuestionValidationError(ValueError):
 
 
 def normalize_question(value: object) -> str:
-    if not value or not isinstance(value, str):
+    if not isinstance(value, str):
         raise QuestionValidationError(
             code="invalid_question",
             public_message="Question must be a non-empty string",
