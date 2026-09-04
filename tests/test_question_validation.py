@@ -22,7 +22,6 @@ error_type_msg = [
     ["invalid_question", "Question must be a non-empty string"],
     ["question_too_long", "Question must not exceed 500 characters"],
 ]
-error_msg = []
 
 
 @pytest.mark.parametrize(
