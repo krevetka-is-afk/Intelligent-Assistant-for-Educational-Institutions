@@ -792,8 +792,7 @@ async def ask(request: Request, _: None = Depends(verify_api_key)):
         return parsed
 
     conversation_key = None
-    if parsed.session_id is not None:
-        conversation_key = f"ask:{parsed.session_id}"
+
     return await _process_question(
         parsed.question,
         request_id=request_id,
@@ -815,8 +814,6 @@ async def ask_from_web(request: Request, _: None = Depends(verify_web_access)):
 
     current_user = await _get_current_web_user(request)
     conversation_key = f"web:{current_user.id}" if current_user is not None else None
-    if conversation_key is None and parsed.session_id is not None:
-        conversation_key = f"ask:{parsed.session_id}"
 
     return await _process_question(
         parsed.question,
