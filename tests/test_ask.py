@@ -445,7 +445,7 @@ def test_ask_rejects_invalid_session_id_without_exception_details(client, auth_h
     }
 
 
-def test_ask_session_memory_keeps_last_five_messages(client, auth_headers, monkeypatch):
+def test_web_ask_session_memory_keeps_last_five_messages(client, monkeypatch, bootstrap_token):
     captured_histories: list[list[str]] = []
 
     async def _capture_ask(
@@ -471,11 +471,15 @@ def test_ask_session_memory_keeps_last_five_messages(client, auth_headers, monke
 
     monkeypatch.setattr("src.server.app.main.ask_question", _capture_ask)
 
+    bootstrap_response = _bootstrap_admin(client, bootstrap_token)
+    assert bootstrap_response.status_code == 303
+
     for index in range(1, 8):
         response = client.post(
-            "/ask",
-            json={"question": f"Q{index}", "session_id": "tg:42"},
-            headers=auth_headers,
+            "/web/ask",
+            json={
+                "question": f"Q{index}",
+            },
         )
         assert response.status_code == 200
 
@@ -490,15 +494,15 @@ def test_ask_session_memory_keeps_last_five_messages(client, auth_headers, monke
     ]
 
 
-def test_ask_session_memory_isolated_by_session_id(client, auth_headers, monkeypatch):
-    observed: dict[str, list[str]] = {}
+def test_ask_does_not_use_caller_controlled_session_memory(client, auth_headers, monkeypatch):
+    captured_histories: list[list[str]] = []
 
     async def _capture_ask(
         question: str, conversation_history: list[str] | None = None
     ) -> RAGResponse:
-        observed[question] = list(conversation_history or [])
+        captured_histories.append(list(conversation_history or []))
         return RAGResponse(
-            answer="ok",
+            answer=f"Ответ на {question}",
             sources=[],
             metadata={
                 "model": "mistral:7b",
@@ -516,28 +520,58 @@ def test_ask_session_memory_isolated_by_session_id(client, auth_headers, monkeyp
 
     monkeypatch.setattr("src.server.app.main.ask_question", _capture_ask)
 
-    first_a = client.post(
-        "/ask",
-        json={"question": "A1", "session_id": "session-a"},
-        headers=auth_headers,
-    )
-    first_b = client.post(
-        "/ask",
-        json={"question": "B1", "session_id": "session-b"},
-        headers=auth_headers,
-    )
-    second_a = client.post(
-        "/ask",
-        json={"question": "A2", "session_id": "session-a"},
-        headers=auth_headers,
-    )
+    for index in range(2):
+        response = client.post(
+            "/ask",
+            json={"question": f"Q{index}", "session_id": "tg:42"},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
 
-    assert first_a.status_code == 200
-    assert first_b.status_code == 200
-    assert second_a.status_code == 200
-    assert observed["A1"] == []
-    assert observed["B1"] == []
-    assert observed["A2"] == ["A1"]
+    assert captured_histories == [
+        [],
+        [],
+    ]
+
+
+def test_web_ask_with_api_key_does_not_use_caller_controlled_session_memory(
+    client, auth_headers, monkeypatch
+):
+    captured_histories: list[list[str]] = []
+
+    async def _capture_ask(
+        question: str, conversation_history: list[str] | None = None
+    ) -> RAGResponse:
+        captured_histories.append(list(conversation_history or []))
+        return RAGResponse(
+            answer=f"Ответ на {question}",
+            sources=[],
+            metadata={
+                "model": "mistral:7b",
+                "embedding_model": "cointegrated/rubert-tiny2",
+                "num_sources": 0,
+                "confidence": 0.0,
+                "fallback_used": False,
+                "fallback_reason": None,
+                "retrieval_time_ms": 1,
+                "generation_time_ms": 1,
+                "total_time_ms": 2,
+            },
+            retrieved_documents=[],
+        )
+
+    monkeypatch.setattr("src.server.app.main.ask_question", _capture_ask)
+
+    for index in range(2):
+        response = client.post(
+            "/web/ask", json={"question": f"Q{index}", "session_id": "52"}, headers=auth_headers
+        )
+        assert response.status_code == 200
+
+    assert captured_histories == [
+        [],
+        [],
+    ]
 
 
 def test_web_ask_uses_web_user_memory_key(client, monkeypatch, bootstrap_token):
