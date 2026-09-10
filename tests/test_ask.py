@@ -366,6 +366,73 @@ def test_web_invite_activation_creates_user_session(client, monkeypatch, bootstr
         assert ask_response.json()["answer"] == "Ответ найден."
 
 
+def test_web_ask_memory_isolated_between_users(client, monkeypatch, bootstrap_token):
+    captured_histories: list[list[str]] = []
+
+    async def _capture_ask(
+        question: str, conversation_history: list[str] | None = None
+    ) -> RAGResponse:
+        captured_histories.append(list(conversation_history or []))
+        return RAGResponse(
+            answer=f"ok: {question}",
+            sources=[],
+            metadata={
+                "model": "mistral:7b",
+                "embedding_model": "cointegrated/rubert-tiny2",
+                "num_sources": 0,
+                "confidence": 0.0,
+                "fallback_used": False,
+                "fallback_reason": None,
+                "retrieval_time_ms": 1,
+                "generation_time_ms": 1,
+                "total_time_ms": 2,
+            },
+            retrieved_documents=[],
+        )
+
+    monkeypatch.setattr("src.server.app.main.ask_question", _capture_ask)
+    bootstrap_response = _bootstrap_admin(client, bootstrap_token)
+    assert bootstrap_response.status_code == 303
+
+    invite_response = client.post(
+        "/web/admin/invites",
+        data={"recipient_label": "ivan.petrov", "expires_in_hours": 24},
+    )
+    assert invite_response.status_code == 200
+    invite_code_match = re.search(r'<code id="invite-code">([^<]+)</code>', invite_response.text)
+    assert invite_code_match is not None
+    invite_code = invite_code_match.group(1)
+
+    with TestClient(app) as invited_client:
+        accept_response = invited_client.post(
+            "/web/invite/accept",
+            data={
+                "invite_code": invite_code,
+                "username": "ivan.petrov",
+                "password": "invite-password",
+            },
+            follow_redirects=False,
+        )
+        assert accept_response.status_code == 303
+        assert "web_session=" in accept_response.headers["set-cookie"]
+
+        a1 = client.post("/web/ask", json={"question": "A1"})
+        assert a1.status_code == 200
+        assert captured_histories == [[]]
+
+        b1 = invited_client.post("/web/ask", json={"question": "B1"})
+        assert b1.status_code == 200
+        assert captured_histories == [[], []]
+
+        a2 = client.post("/web/ask", json={"question": "A2"})
+        assert a2.status_code == 200
+        assert captured_histories == [[], [], ["A1"]]
+
+        b2 = invited_client.post("/web/ask", json={"question": "B2"})
+        assert b2.status_code == 200
+        assert captured_histories == [[], [], ["A1"], ["B1"]]
+
+
 def test_non_admin_cannot_create_invites(client, bootstrap_token):
     bootstrap_response = _bootstrap_admin(client, bootstrap_token)
     assert bootstrap_response.status_code == 303
