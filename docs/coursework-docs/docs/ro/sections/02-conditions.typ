@@ -9,7 +9,7 @@
 ]
 
 #paragraph[
-  Серверный узел должен обеспечивать одновременную работу FastAPI RAG-сервера, ChromaDB, PostgreSQL 16 и Ollama/Mistral. Минимальная конфигурация серверного узла: 4 vCPU, 16 ГБ оперативной памяти, SSD-накопитель объёмом не менее 20 ГБ для хранения ChromaDB-индекса, моделей и логов. Для ускорения генерации ответов Ollama может использовать GPU: NVIDIA-видеокарта с не менее 8 ГБ VRAM.
+  Серверный узел должен обеспечивать одновременную работу FastAPI RAG-сервера, ChromaDB, PostgreSQL 16 и Ollama/qwen2.5:3b. Минимальная конфигурация серверного узла: 4 vCPU, 16 ГБ оперативной памяти, SSD-накопитель объёмом не менее 20 ГБ для хранения ChromaDB-индекса, моделей и логов. Для ускорения генерации ответов Ollama может использовать GPU: NVIDIA-видеокарта с не менее 8 ГБ VRAM.
 ]
 
 == Минимальный состав программных средств
@@ -19,7 +19,7 @@
 ]
 
 #paragraph[
-  Серверная часть разворачивается в контейнерной среде и использует следующий стек: Python 3.12, FastAPI, LangChain, ChromaDB, ruBERT-tiny2 (HuggingFace), Ollama (Mistral), PostgreSQL 16 / SQLAlchemy (asyncpg), aiogram 3.x (Telegram-бот), Streamlit (веб-клиент), Tesseract OCR, PyPDF2, Docker и Docker Compose.
+  Серверная часть разворачивается в контейнерной среде и использует следующий стек: Python 3.12, FastAPI, LangChain, ChromaDB, ruBERT-tiny2 (HuggingFace), Ollama (qwen2.5:3b), PostgreSQL 16 / SQLAlchemy (asyncpg), aiogram 3.x (Telegram-бот), Streamlit (веб-клиент), Tesseract OCR, PyPDF2, Docker и Docker Compose.
 ]
 
 #paragraph[
