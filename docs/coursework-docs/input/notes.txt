@@ -19,7 +19,7 @@ English: Development of an Intelligent Assistant for Educational Institutions.
 - Векторное хранилище ChromaDB (src/server/app/vector.py) с эмбеддингами ruBERT-tiny2.
 - Индексация документов (src/server/app/index_documents.py, document_ingestion.py):
   PDF/HTML/TXT → чанки → эмбеддинги → ChromaDB.
-- LLM-интеграция (Ollama/Mistral) через LangChain (src/server/app/rag.py).
+- LLM-интеграция (Ollama/qwen2.5:3b) через LangChain (src/server/app/rag.py).
 - Лексический резервный поиск (src/server/app/lexical.py) при недоступности LLM.
 - История диалогов (src/server/app/conversation_memory.py) с хранением в PostgreSQL.
 - Аутентификация по токену (src/server/app/auth_*.py): роли пользователь/администратор.
@@ -35,7 +35,7 @@ English: Development of an Intelligent Assistant for Educational Institutions.
 - GET /metrics — текущие метрики качества.
 
 Ограничения и уточнения:
-- Основной режим работы — локальный Ollama/Mistral; при недоступности — lexical fallback.
+- Основной режим работы — локальный Ollama/qwen2.5:3b; при недоступности — lexical fallback.
 - Векторная БД (ChromaDB) хранится на диске; пересборка не прерывает сервис.
 - Персональные данные ограничены Telegram ID; соблюдается локальная политика ПДн.
 - Release gate: pytest + uv-linters.sh; docker-compose up —проверка smoke-эндпоинтов.
@@ -48,6 +48,6 @@ English: Development of an Intelligent Assistant for Educational Institutions.
 
 Рекомендуемая формулировка архитектуры:
 FastAPI RAG-сервер как центральный компонент; ChromaDB + ruBERT-tiny2 для семантического
-поиска; Ollama/Mistral для генерации ответов с цитированием источников; Telegram-бот и
+поиска; Ollama/qwen2.5:3b для генерации ответов с цитированием источников; Telegram-бот и
 Streamlit как клиентские интерфейсы; PostgreSQL для хранения диалогов и пользователей;
 Docker Compose для изолированного развёртывания.
