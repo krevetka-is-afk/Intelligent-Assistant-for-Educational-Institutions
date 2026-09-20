@@ -82,6 +82,7 @@ API_BASE_URL=http://localhost:8000
 BOT_TOKEN=replace-with-real-token
 DATABASE_URL=sqlite+aiosqlite:///./bot.db
 OLLAMA_HOST=http://localhost:11434
+LLM_MODEL=qwen2.5:3b
 ```
 
 `WEB_AUTH_DATABASE_URL` можно не задавать: сервер сам выберет подходящий путь для локального запуска и контейнера.
