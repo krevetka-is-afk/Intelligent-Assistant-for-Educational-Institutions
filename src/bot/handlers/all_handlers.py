@@ -70,34 +70,6 @@ def confirm_keyboard() -> InlineKeyboardMarkup:
 # ---------------------------------------------------------------------------
 
 
-def format_answer(response: str, sources: list) -> list[str]:
-    sources_lines = ["", "📚 <b>Источники:</b>"]
-    for s in sources:
-        meta = s.get("metadata", {})
-        title = meta.get("title") or meta.get("source", "Неизвестно")
-        page = meta.get("page")
-        line = f"• {html.escape(str(title))}" + (f", стр. {html.escape(str(page))}" if page else "")
-        sources_lines.append(line)
-    sources_text = "\n".join(sources_lines)
-    response = html.escape(response)
-
-    full = response + sources_text
-    if len(full) <= TELEGRAM_LIMIT:
-        return [full]
-
-    parts = []
-    while len(response) > TELEGRAM_LIMIT:
-        parts.append(response[:TELEGRAM_LIMIT])
-        response = response[TELEGRAM_LIMIT:]
-    last = response + "\n" + sources_text
-    if len(last) <= TELEGRAM_LIMIT:
-        parts.append(last)
-    else:
-        parts.append(response)
-        parts.append(sources_text[:TELEGRAM_LIMIT])
-    return parts
-
-
 def build_confirmation_preview(title: str, extracted_text: str) -> str:
     preview = extracted_text[:1000] + ("..." if len(extracted_text) > 1000 else "")
     return f"📄 <b>{title}</b>\n\n{html.escape(preview, quote=False)}\n\nВсё верно?"
