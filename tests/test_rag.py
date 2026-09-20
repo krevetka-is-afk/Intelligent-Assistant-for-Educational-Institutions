@@ -54,7 +54,7 @@ def test_ask_question_returns_fallback_when_llm_fails(monkeypatch):
     docs = [
         RetrievedDocument(
             document=Document(
-                page_content="В приказе сказано, что пересдача проходит в июле.",
+                page_content="В приказе сказано, что пересдача проходит в период пересдач.",
                 metadata={"source": "rules.txt", "title": "Правила", "chunk_index": 0},
             ),
             distance=0.15,
@@ -99,7 +99,7 @@ def test_ask_question_uses_conversation_history_in_retrieval_query(monkeypatch):
             "А что по дедлайну?",
             conversation_history=[
                 "Я на 2 курсе",
-                "У меня пересдача в июле",
+                "У меня пересдача",
                 "Какие документы нужны?",
                 "И куда нести?",
             ],
@@ -109,5 +109,5 @@ def test_ask_question_uses_conversation_history_in_retrieval_query(monkeypatch):
     assert result.answer == "ok"
     assert observed["k"] == str(rag.config.RAG_TOP_K)
     assert observed["query"] == (
-        "У меня пересдача в июле\nКакие документы нужны?\nИ куда нести?\nА что по дедлайну?"
+        "У меня пересдача\nКакие документы нужны?\nИ куда нести?\nА что по дедлайну?"
     )
