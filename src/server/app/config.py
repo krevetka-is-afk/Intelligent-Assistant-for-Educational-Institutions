@@ -131,7 +131,7 @@ CHROMA_COLLECTION_NAME = getenv("CHROMA_COLLECTION_NAME", "edu_documents") or "e
 HF_EMBEDDING_MODEL = (
     getenv("HF_EMBEDDING_MODEL", "cointegrated/rubert-tiny2") or "cointegrated/rubert-tiny2"
 )
-LLM_MODEL = getenv("LLM_MODEL", "mistral:7b") or "mistral:7b"
+LLM_MODEL = getenv("LLM_MODEL", "qwen2.5:3b") or "qwen2.5:3b"
 RAG_TOP_K = int(getenv("RAG_TOP_K", "4") or "4")
 RAG_TOTAL_TIMEOUT_SECONDS = float(getenv("RAG_TOTAL_TIMEOUT_SECONDS", "420") or "420")
 LLM_TIMEOUT_SECONDS = float(getenv("LLM_TIMEOUT_SECONDS", "360") or "360")
