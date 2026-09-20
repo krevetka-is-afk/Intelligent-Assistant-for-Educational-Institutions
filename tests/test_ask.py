@@ -10,6 +10,22 @@ from src.server.app.rag import RAGResponse
 from src.server.app.vector import EmptyVectorStoreError
 
 
+def _rag_metadata(**overrides: object) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "model": "qwen2.5:3b",
+        "embedding_model": "cointegrated/rubert-tiny2",
+        "num_sources": 0,
+        "confidence": 0.0,
+        "fallback_used": False,
+        "fallback_reason": None,
+        "retrieval_time_ms": 1,
+        "generation_time_ms": 1,
+        "total_time_ms": 2,
+    }
+    metadata.update(overrides)
+    return metadata
+
+
 @pytest.fixture(autouse=True)
 def reset_conversation_memory_store():
     asyncio.run(conversation_memory_store.clear_all())
@@ -30,17 +46,13 @@ async def _fake_ask_question(
                 "metadata": {"title": "faq", "source": "faq", "page": 2, "chunk_index": 0},
             }
         ],
-        metadata={
-            "model": "qwen2.5:3b",
-            "embedding_model": "cointegrated/rubert-tiny2",
-            "num_sources": 1,
-            "confidence": 0.91,
-            "fallback_used": False,
-            "fallback_reason": None,
-            "retrieval_time_ms": 5,
-            "generation_time_ms": 40,
-            "total_time_ms": 45,
-        },
+        metadata=_rag_metadata(
+            num_sources=1,
+            confidence=0.91,
+            retrieval_time_ms=5,
+            generation_time_ms=40,
+            total_time_ms=45,
+        ),
         retrieved_documents=[
             type(
                 "_Retrieved",
@@ -87,17 +99,13 @@ def test_ask_returns_compatible_contract(client, monkeypatch):
                 "metadata": {"title": "faq", "source": "faq", "page": 2, "chunk_index": 0},
             }
         ],
-        "metadata": {
-            "model": "qwen2.5:3b",
-            "embedding_model": "cointegrated/rubert-tiny2",
-            "num_sources": 1,
-            "confidence": 0.91,
-            "fallback_used": False,
-            "fallback_reason": None,
-            "retrieval_time_ms": 5,
-            "generation_time_ms": 40,
-            "total_time_ms": 45,
-        },
+        "metadata": _rag_metadata(
+            num_sources=1,
+            confidence=0.91,
+            retrieval_time_ms=5,
+            generation_time_ms=40,
+            total_time_ms=45,
+        ),
     }
 
 
@@ -376,17 +384,7 @@ def test_web_ask_memory_isolated_between_users(client, monkeypatch, bootstrap_to
         return RAGResponse(
             answer=f"ok: {question}",
             sources=[],
-            metadata={
-                "model": "qwen2.5:3b",
-                "embedding_model": "cointegrated/rubert-tiny2",
-                "num_sources": 0,
-                "confidence": 0.0,
-                "fallback_used": False,
-                "fallback_reason": None,
-                "retrieval_time_ms": 1,
-                "generation_time_ms": 1,
-                "total_time_ms": 2,
-            },
+            metadata=_rag_metadata(),
             retrieved_documents=[],
         )
 
@@ -522,17 +520,7 @@ def test_web_ask_session_memory_keeps_last_five_messages(client, monkeypatch, bo
         return RAGResponse(
             answer=f"Ответ на {question}",
             sources=[],
-            metadata={
-                "model": "qwen2.5:3b",
-                "embedding_model": "cointegrated/rubert-tiny2",
-                "num_sources": 0,
-                "confidence": 0.0,
-                "fallback_used": False,
-                "fallback_reason": None,
-                "retrieval_time_ms": 1,
-                "generation_time_ms": 1,
-                "total_time_ms": 2,
-            },
+            metadata=_rag_metadata(),
             retrieved_documents=[],
         )
 
@@ -571,17 +559,7 @@ def test_ask_does_not_use_caller_controlled_session_memory(client, auth_headers,
         return RAGResponse(
             answer=f"Ответ на {question}",
             sources=[],
-            metadata={
-                "model": "qwen2.5:3b",
-                "embedding_model": "cointegrated/rubert-tiny2",
-                "num_sources": 0,
-                "confidence": 0.0,
-                "fallback_used": False,
-                "fallback_reason": None,
-                "retrieval_time_ms": 1,
-                "generation_time_ms": 1,
-                "total_time_ms": 2,
-            },
+            metadata=_rag_metadata(),
             retrieved_documents=[],
         )
 
@@ -613,17 +591,7 @@ def test_web_ask_with_api_key_does_not_use_caller_controlled_session_memory(
         return RAGResponse(
             answer=f"Ответ на {question}",
             sources=[],
-            metadata={
-                "model": "qwen2.5:3b",
-                "embedding_model": "cointegrated/rubert-tiny2",
-                "num_sources": 0,
-                "confidence": 0.0,
-                "fallback_used": False,
-                "fallback_reason": None,
-                "retrieval_time_ms": 1,
-                "generation_time_ms": 1,
-                "total_time_ms": 2,
-            },
+            metadata=_rag_metadata(),
             retrieved_documents=[],
         )
 
@@ -651,17 +619,7 @@ def test_web_ask_uses_web_user_memory_key(client, monkeypatch, bootstrap_token):
         return RAGResponse(
             answer=f"ok: {question}",
             sources=[],
-            metadata={
-                "model": "qwen2.5:3b",
-                "embedding_model": "cointegrated/rubert-tiny2",
-                "num_sources": 0,
-                "confidence": 0.0,
-                "fallback_used": False,
-                "fallback_reason": None,
-                "retrieval_time_ms": 1,
-                "generation_time_ms": 1,
-                "total_time_ms": 2,
-            },
+            metadata=_rag_metadata(),
             retrieved_documents=[],
         )
 
