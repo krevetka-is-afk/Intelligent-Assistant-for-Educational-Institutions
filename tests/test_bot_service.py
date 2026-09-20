@@ -1,14 +1,11 @@
 import asyncio
 import importlib
 import json
+import re
 
 import httpx
 import pytest
 from sqlalchemy import select
-
-REPLY_FORMATTING_SKIP_REASON = (
-    "Temporarily disabled until Telegram reply formatting behavior is clarified"
-)
 
 
 def _load_bot_modules(monkeypatch, tmp_path):
@@ -139,7 +136,6 @@ def test_ask_api_client_extracts_service_error_details(monkeypatch, tmp_path):
         asyncio.run(database.engine.dispose())
 
 
-@pytest.mark.skip(reason=REPLY_FORMATTING_SKIP_REASON)
 def test_process_text_question_saves_history_and_sends_reply(monkeypatch, tmp_path):
     database, _, api_client, service, models = _load_bot_modules(monkeypatch, tmp_path)
 
@@ -192,6 +188,190 @@ def test_process_text_question_saves_history_and_sends_reply(monkeypatch, tmp_pa
         asyncio.run(database.engine.dispose())
 
 
+def test_process_text_question_escapes_malicious_answer_and_sources(monkeypatch, tmp_path):
+    database, _, api_client, service, models = _load_bot_modules(monkeypatch, tmp_path)
+
+    class _FakeAPIClient:
+        async def ask(self, question: str):
+            assert question == "Можно ли доверять HTML?"
+            return api_client.AskResult(
+                answer="<b>ложное форматирование</b>",
+                sources=[
+                    api_client.AskSource(
+                        content="Doc",
+                        metadata={
+                            "title": "<i>Регламент</i> & javascript:alert(1)",
+                            "page": "3 <script>",
+                        },
+                    )
+                ],
+                metadata={"confidence": 0.7, "fallback_used": False},
+            )
+
+    async def scenario():
+        await database.init_db()
+        sent_messages: list[str] = []
+
+        async def send_reply(text: str) -> None:
+            sent_messages.append(text)
+
+        reply = await service.process_text_question(
+            telegram_id=112,
+            username="student",
+            question="Можно ли доверять HTML?",
+            send_reply=send_reply,
+            api_client=_FakeAPIClient(),
+        )
+
+        async with database.async_session_factory() as session:
+            stored_request = await session.scalar(select(models.Request))
+
+        expected_message = (
+            "&lt;b&gt;ложное форматирование&lt;/b&gt;\n\n"
+            "Уверенность: 0.70\n\n"
+            "Источники:\n"
+            "1. &lt;i&gt;Регламент&lt;/i&gt; &amp; javascript:alert(1), стр. 3 &lt;script&gt;"
+        )
+        assert reply.message == expected_message
+        assert sent_messages == [expected_message]
+        assert stored_request is not None
+        assert stored_request.ai_response == expected_message
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected_answer"),
+    [
+        ("<b>незакрытый тег", "&lt;b&gt;незакрытый тег"),
+        ("A & B < C > D", "A &amp; B &lt; C &gt; D"),
+    ],
+)
+def test_process_text_question_escapes_untrusted_answer_text(
+    monkeypatch, tmp_path, answer, expected_answer
+):
+    database, _, api_client, service, _ = _load_bot_modules(monkeypatch, tmp_path)
+
+    class _FakeAPIClient:
+        async def ask(self, question: str):
+            assert question == "Проверка спецсимволов"
+            return api_client.AskResult(answer=answer, sources=[], metadata={})
+
+    async def scenario():
+        await database.init_db()
+        sent_messages: list[str] = []
+
+        async def send_reply(text: str) -> None:
+            sent_messages.append(text)
+
+        reply = await service.process_text_question(
+            telegram_id=113,
+            username="student",
+            question="Проверка спецсимволов",
+            send_reply=send_reply,
+            api_client=_FakeAPIClient(),
+        )
+
+        assert reply.message == expected_answer
+        assert sent_messages == [expected_answer]
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
+
+
+def test_process_text_question_renders_unexpected_source_scheme_as_text(monkeypatch, tmp_path):
+    database, _, api_client, service, _ = _load_bot_modules(monkeypatch, tmp_path)
+
+    class _FakeAPIClient:
+        async def ask(self, question: str):
+            assert question == "Источник?"
+            return api_client.AskResult(
+                answer="Ответ.",
+                sources=[
+                    api_client.AskSource(
+                        content="Doc",
+                        metadata={"source": "javascript:alert(1)", "page": 9},
+                    )
+                ],
+                metadata={},
+            )
+
+    async def scenario():
+        await database.init_db()
+        sent_messages: list[str] = []
+
+        async def send_reply(text: str) -> None:
+            sent_messages.append(text)
+
+        reply = await service.process_text_question(
+            telegram_id=114,
+            username="student",
+            question="Источник?",
+            send_reply=send_reply,
+            api_client=_FakeAPIClient(),
+        )
+
+        expected_message = "Ответ.\n\nИсточники:\n1. javascript:alert(1), стр. 9"
+        assert reply.message == expected_message
+        assert sent_messages == [expected_message]
+        assert "<a href" not in reply.message
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
+
+
+def test_process_text_question_splits_long_unsafe_text_on_html_entity_boundary(
+    monkeypatch, tmp_path
+):
+    database, _, api_client, service, _ = _load_bot_modules(monkeypatch, tmp_path)
+
+    class _FakeAPIClient:
+        async def ask(self, question: str):
+            assert question == "Длинный ответ"
+            return api_client.AskResult(answer="&" * 1000, sources=[], metadata={})
+
+    def assert_no_broken_html_entities(chunk: str) -> None:
+        for match in re.finditer("&", chunk):
+            semicolon_at = chunk.find(";", match.start() + 1)
+            next_ampersand_at = chunk.find("&", match.start() + 1)
+            assert semicolon_at != -1
+            assert next_ampersand_at == -1 or semicolon_at < next_ampersand_at
+            assert chunk[match.start() : semicolon_at + 1] == "&amp;"
+
+    async def scenario():
+        await database.init_db()
+        sent_messages: list[str] = []
+
+        async def send_reply(text: str) -> None:
+            sent_messages.append(text)
+
+        await service.process_text_question(
+            telegram_id=115,
+            username="student",
+            question="Длинный ответ",
+            send_reply=send_reply,
+            api_client=_FakeAPIClient(),
+        )
+
+        assert sent_messages
+        assert all(len(chunk) <= service.TELEGRAM_MESSAGE_LIMIT for chunk in sent_messages)
+        for chunk in sent_messages:
+            assert_no_broken_html_entities(chunk)
+        assert sent_messages[0].endswith(f"\n{service.TELEGRAM_WEB_CONTINUATION_NOTICE}")
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
+
+
 def test_process_text_question_handles_timeout(monkeypatch, tmp_path, caplog):
     database, _, _, service, models = _load_bot_modules(monkeypatch, tmp_path)
     service.logger.propagate = True
@@ -231,7 +411,6 @@ def test_process_text_question_handles_timeout(monkeypatch, tmp_path, caplog):
     assert "Timed out while processing question" in caplog.text
 
 
-@pytest.mark.skip(reason=REPLY_FORMATTING_SKIP_REASON)
 def test_process_text_question_passes_session_id(monkeypatch, tmp_path):
     database, _, api_client, service, _ = _load_bot_modules(monkeypatch, tmp_path)
 
@@ -394,7 +573,45 @@ def test_process_text_question_handles_api_unauthorized(monkeypatch, tmp_path, c
     assert "API rejected bot credentials" in caplog.text
 
 
-@pytest.mark.skip(reason=REPLY_FORMATTING_SKIP_REASON)
+def test_process_text_question_handles_invalid_api_payload(monkeypatch, tmp_path, caplog):
+    database, _, _, service, models = _load_bot_modules(monkeypatch, tmp_path)
+    service.logger.propagate = True
+
+    class _InvalidAPIClient:
+        async def ask(self, question: str):
+            raise service.AskAPIResponseError("invalid payload")
+
+    async def scenario():
+        await database.init_db()
+        sent_messages: list[str] = []
+
+        async def send_reply(text: str) -> None:
+            sent_messages.append(text)
+
+        await service.process_text_question(
+            telegram_id=910,
+            username="student",
+            question="Есть ли ответ?",
+            send_reply=send_reply,
+            api_client=_InvalidAPIClient(),
+        )
+
+        async with database.async_session_factory() as session:
+            stored_request = await session.scalar(select(models.Request))
+
+        assert stored_request is not None
+        assert stored_request.ai_response == service.INVALID_RESPONSE_REPLY_TEXT
+        assert sent_messages == [service.INVALID_RESPONSE_REPLY_TEXT]
+
+    try:
+        with caplog.at_level("ERROR", logger="bot.service"):
+            asyncio.run(scenario())
+    finally:
+        asyncio.run(database.engine.dispose())
+
+    assert "API returned invalid payload" in caplog.text
+
+
 def test_process_question_saves_image_content_type(monkeypatch, tmp_path):
     database, _, api_client, service, models = _load_bot_modules(monkeypatch, tmp_path)
 
@@ -499,7 +716,6 @@ def test_format_sources_list_humanizes_file_names(monkeypatch, tmp_path):
     asyncio.run(database.engine.dispose())
 
 
-@pytest.mark.skip(reason=REPLY_FORMATTING_SKIP_REASON)
 def test_process_text_question_hides_sources_when_disabled(monkeypatch, tmp_path):
     monkeypatch.setenv("SHOW_SOURCES", "0")
     database, _, api_client, service, models = _load_bot_modules(monkeypatch, tmp_path)
