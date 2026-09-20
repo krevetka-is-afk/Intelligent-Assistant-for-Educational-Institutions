@@ -36,7 +36,7 @@ append PREPARE_RAG_ON_STARTUP "${PREPARE_RAG_ON_STARTUP:-1}"
 append AUTO_INDEX_ON_STARTUP "${AUTO_INDEX_ON_STARTUP:-1}"
 
 append OLLAMA_HOST "${OLLAMA_HOST:-http://host.docker.internal:11434}"
-append LLM_MODEL "${LLM_MODEL:-mistral:7b}"
+append LLM_MODEL "${LLM_MODEL:-qwen2.5:3b}"
 append HF_EMBEDDING_MODEL "${HF_EMBEDDING_MODEL:-cointegrated/rubert-tiny2}"
 append CHROMA_COLLECTION_NAME "${CHROMA_COLLECTION_NAME:-edu_documents}"
 append VECTOR_DB_DIR "${VECTOR_DB_DIR:-/data}"
