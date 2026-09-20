@@ -63,7 +63,14 @@ def test_ask_question_returns_fallback_when_llm_fails(monkeypatch):
 
     monkeypatch.setattr(rag, "similarity_search", lambda question, k: docs)
 
-    def _raise_llm(question: str, retrieved_documents):
+    llm_calls: list[tuple[str, list[RetrievedDocument], list[str] | None]] = []
+
+    def _raise_llm(
+        question: str,
+        retrieved_documents: list[RetrievedDocument],
+        conversation_history: list[str] | None = None,
+    ) -> str:
+        llm_calls.append((question, retrieved_documents, conversation_history))
         raise RuntimeError("llm down")
 
     monkeypatch.setattr(rag, "invoke_llm", _raise_llm)
@@ -74,7 +81,9 @@ def test_ask_question_returns_fallback_when_llm_fails(monkeypatch):
     assert result.metadata["fallback_reason"] == "llm_unavailable"
     assert result.metadata["num_sources"] == 1
     assert result.answer.startswith("LLM временно недоступна")
+    assert "1. В приказе сказано, что пересдача проходит в период пересдач." in result.answer
     assert result.sources[0]["metadata"]["title"] == "Правила"
+    assert llm_calls == [("Когда пересдача?", docs, None)]
 
 
 def test_ask_question_uses_conversation_history_in_retrieval_query(monkeypatch):
