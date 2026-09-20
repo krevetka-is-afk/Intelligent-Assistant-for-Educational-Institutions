@@ -31,7 +31,7 @@ async def _fake_ask_question(
             }
         ],
         metadata={
-            "model": "mistral:7b",
+            "model": "qwen2.5:3b",
             "embedding_model": "cointegrated/rubert-tiny2",
             "num_sources": 1,
             "confidence": 0.91,
@@ -88,7 +88,7 @@ def test_ask_returns_compatible_contract(client, monkeypatch):
             }
         ],
         "metadata": {
-            "model": "mistral:7b",
+            "model": "qwen2.5:3b",
             "embedding_model": "cointegrated/rubert-tiny2",
             "num_sources": 1,
             "confidence": 0.91,
@@ -377,7 +377,7 @@ def test_web_ask_memory_isolated_between_users(client, monkeypatch, bootstrap_to
             answer=f"ok: {question}",
             sources=[],
             metadata={
-                "model": "mistral:7b",
+                "model": "qwen2.5:3b",
                 "embedding_model": "cointegrated/rubert-tiny2",
                 "num_sources": 0,
                 "confidence": 0.0,
@@ -523,7 +523,7 @@ def test_web_ask_session_memory_keeps_last_five_messages(client, monkeypatch, bo
             answer=f"Ответ на {question}",
             sources=[],
             metadata={
-                "model": "mistral:7b",
+                "model": "qwen2.5:3b",
                 "embedding_model": "cointegrated/rubert-tiny2",
                 "num_sources": 0,
                 "confidence": 0.0,
@@ -572,7 +572,7 @@ def test_ask_does_not_use_caller_controlled_session_memory(client, auth_headers,
             answer=f"Ответ на {question}",
             sources=[],
             metadata={
-                "model": "mistral:7b",
+                "model": "qwen2.5:3b",
                 "embedding_model": "cointegrated/rubert-tiny2",
                 "num_sources": 0,
                 "confidence": 0.0,
@@ -614,7 +614,7 @@ def test_web_ask_with_api_key_does_not_use_caller_controlled_session_memory(
             answer=f"Ответ на {question}",
             sources=[],
             metadata={
-                "model": "mistral:7b",
+                "model": "qwen2.5:3b",
                 "embedding_model": "cointegrated/rubert-tiny2",
                 "num_sources": 0,
                 "confidence": 0.0,
@@ -652,7 +652,7 @@ def test_web_ask_uses_web_user_memory_key(client, monkeypatch, bootstrap_token):
             answer=f"ok: {question}",
             sources=[],
             metadata={
-                "model": "mistral:7b",
+                "model": "qwen2.5:3b",
                 "embedding_model": "cointegrated/rubert-tiny2",
                 "num_sources": 0,
                 "confidence": 0.0,
