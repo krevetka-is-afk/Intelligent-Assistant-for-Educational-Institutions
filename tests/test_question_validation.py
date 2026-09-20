@@ -1,9 +1,6 @@
 import pytest
 
-from src.server.app.question_validation import (
-    QuestionValidationError,
-    normalize_question,
-)
+from src.server.app.question_validation import QuestionValidationError, normalize_question
 
 
 @pytest.mark.parametrize(
