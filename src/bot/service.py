@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -86,7 +87,9 @@ def _resolve_source_title(source: AskSource, index: int) -> str:
         if title is not None:
             if key == "Class Index":
                 return f"Class {title}"
-            return _truncate_source_title(_humanize_source_label(title))
+            if key == "source":
+                title = _humanize_source_label(title)
+            return _truncate_source_title(title)
 
     fallback = _normalize_source_field(source.content.splitlines()[0] if source.content else None)
     if fallback is not None:
@@ -106,10 +109,12 @@ def _format_sources_list(sources: list[AskSource]) -> str:
             continue
 
         seen.add(source_key)
+        safe_title = html.escape(title, quote=False)
         if page is not None:
-            unique_sources.append(f"{len(unique_sources) + 1}. {title}, стр. {page}")
+            safe_page = html.escape(page, quote=False)
+            unique_sources.append(f"{len(unique_sources) + 1}. {safe_title}, стр. {safe_page}")
         else:
-            unique_sources.append(f"{len(unique_sources) + 1}. {title}")
+            unique_sources.append(f"{len(unique_sources) + 1}. {safe_title}")
 
     if not unique_sources:
         return ""
@@ -131,17 +136,29 @@ def _format_answer_metadata(metadata: dict[str, Any]) -> str:
 
 
 def _build_reply_text(answer: str, sources: list[AskSource], metadata: dict[str, Any]) -> str:
-    normalized_answer = answer.strip()
-    # Временно отключено: не показывать в Telegram «Уверенность» и «Источники».
-    # metadata_block = _format_answer_metadata(metadata)
-    # sources_block = _format_sources_list(sources) if config.SHOW_SOURCES else ""
-    # blocks = [normalized_answer]
-    # if metadata_block:
-    #     blocks.append(metadata_block)
-    # if sources_block:
-    #     blocks.append(sources_block)
-    # return "\n\n".join(blocks)
-    return normalized_answer
+    normalized_answer = html.escape(answer.strip(), quote=False)
+    metadata_block = _format_answer_metadata(metadata)
+    sources_block = _format_sources_list(sources) if config.SHOW_SOURCES else ""
+    blocks = [normalized_answer]
+    if metadata_block:
+        blocks.append(metadata_block)
+    if sources_block:
+        blocks.append(sources_block)
+    return "\n\n".join(blocks)
+
+
+def _avoid_html_entity_split(text: str, split_at: int) -> int:
+    ampersand_at = text.rfind("&", 0, split_at)
+    if ampersand_at == -1:
+        return split_at
+
+    tail = text[ampersand_at:split_at]
+    if ";" in tail:
+        return split_at
+
+    if re.fullmatch(r"&(?:#[0-9]*|[A-Za-z][A-Za-z0-9]*)?", tail):
+        return ampersand_at
+    return split_at
 
 
 def _split_reply_text(text: str, *, max_length: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
@@ -165,7 +182,9 @@ def _split_reply_text(text: str, *, max_length: int = TELEGRAM_MESSAGE_LIMIT) ->
                 break
 
         if split_at == -1:
-            truncated = remaining[: max_length - len(TELEGRAM_WEB_CONTINUATION_NOTICE) - 1].rstrip()
+            hard_limit = max_length - len(TELEGRAM_WEB_CONTINUATION_NOTICE) - 1
+            split_at = _avoid_html_entity_split(remaining, hard_limit)
+            truncated = remaining[:split_at].rstrip()
             chunks.append(f"{truncated}\n{TELEGRAM_WEB_CONTINUATION_NOTICE}")
             break
 
