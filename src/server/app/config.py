@@ -134,6 +134,14 @@ HF_EMBEDDING_MODEL = (
 )
 LLM_MODEL = getenv("LLM_MODEL", "qwen2.5:3b") or "qwen2.5:3b"
 RAG_TOP_K = int(getenv("RAG_TOP_K", "4") or "4")
+RAG_MAX_CONTEXT_DOCUMENTS = int(
+    getenv("RAG_MAX_CONTEXT_DOCUMENTS", str(RAG_TOP_K)) or str(RAG_TOP_K)
+)
+RAG_MAX_DOCUMENT_CHARS = int(getenv("RAG_MAX_DOCUMENT_CHARS", "1200") or "1200")
+RAG_MAX_TOTAL_CONTEXT_CHARS = int(getenv("RAG_MAX_TOTAL_CONTEXT_CHARS", "3600") or "3600")
+RAG_MAX_HISTORY_MESSAGES = int(getenv("RAG_MAX_HISTORY_MESSAGES", "5") or "5")
+RAG_MAX_HISTORY_CHARS = int(getenv("RAG_MAX_HISTORY_CHARS", "1600") or "1600")
+RAG_SOURCE_SNIPPET_CHARS = int(getenv("RAG_SOURCE_SNIPPET_CHARS", "320") or "320")
 RAG_TOTAL_TIMEOUT_SECONDS = float(getenv("RAG_TOTAL_TIMEOUT_SECONDS", "420") or "420")
 LLM_TIMEOUT_SECONDS = float(getenv("LLM_TIMEOUT_SECONDS", "360") or "360")
 CONVERSATION_MEMORY_WINDOW = int(getenv("CONVERSATION_MEMORY_WINDOW", "5") or "5")
@@ -144,27 +152,8 @@ CONVERSATION_MEMORY_MAX_SESSIONS = int(
 CHUNK_SIZE = int(getenv("RAG_CHUNK_SIZE", "500") or "500")
 CHUNK_OVERLAP = int(getenv("RAG_CHUNK_OVERLAP", "100") or "100")
 PREPARE_RAG_ON_STARTUP = _get_bool_env("PREPARE_RAG_ON_STARTUP", True)
-AUTO_INDEX_ON_STARTUP = _get_bool_env("AUTO_INDEX_ON_STARTUP", True)
+AUTO_INDEX_ON_STARTUP = _get_bool_env("AUTO_INDEX_ON_STARTUP", APP_ENV != "production")
 SHOW_SOURCES = _get_bool_env("SHOW_SOURCES", True)
-
-LLM_PROMPT_TEMPLATE = """
-Ты отвечаешь на вопросы студентов и сотрудников по документам учебного процесса.
-
-Правила:
-- Используй только факты из переданного контекста.
-- Если данных недостаточно, прямо скажи об этом.
-- Не выдумывай отсутствующие даты, правила или ссылки.
-- Дай краткий ответ на русском языке.
-
-История последних сообщений пользователя:
-{conversation_history}
-
-Контекст:
-{information}
-
-Вопрос:
-{question}
-"""
 
 
 def validate_chunk_settings() -> None:
@@ -174,6 +163,20 @@ def validate_chunk_settings() -> None:
         raise ValueError("RAG_CHUNK_OVERLAP must be non-negative")
     if CHUNK_OVERLAP >= CHUNK_SIZE:
         raise ValueError("RAG_CHUNK_OVERLAP must be smaller than RAG_CHUNK_SIZE")
+
+
+def validate_rag_policy_settings() -> None:
+    positive_settings = {
+        "RAG_MAX_CONTEXT_DOCUMENTS": RAG_MAX_CONTEXT_DOCUMENTS,
+        "RAG_MAX_DOCUMENT_CHARS": RAG_MAX_DOCUMENT_CHARS,
+        "RAG_MAX_TOTAL_CONTEXT_CHARS": RAG_MAX_TOTAL_CONTEXT_CHARS,
+        "RAG_MAX_HISTORY_MESSAGES": RAG_MAX_HISTORY_MESSAGES,
+        "RAG_MAX_HISTORY_CHARS": RAG_MAX_HISTORY_CHARS,
+        "RAG_SOURCE_SNIPPET_CHARS": RAG_SOURCE_SNIPPET_CHARS,
+    }
+    for name, value in positive_settings.items():
+        if value <= 0:
+            raise ValueError(f"{name} must be positive")
 
 
 def validate_runtime_config() -> None:
@@ -188,3 +191,4 @@ def validate_runtime_config() -> None:
     if CONVERSATION_MEMORY_MAX_SESSIONS <= 0:
         raise RuntimeError("CONVERSATION_MEMORY_MAX_SESSIONS must be positive")
     validate_chunk_settings()
+    validate_rag_policy_settings()
