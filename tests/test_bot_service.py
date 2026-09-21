@@ -11,7 +11,7 @@ from sqlalchemy import select
 def _load_bot_modules(monkeypatch, tmp_path):
     db_path = tmp_path / "bot.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
-    monkeypatch.setenv("API_KEY", "bot-test-api-key")
+    monkeypatch.setenv("TELEGRAM_SERVICE_KEY", "bot-test-telegram-service-key")
     monkeypatch.setenv("API_BASE_URL", "http://test")
 
     importlib.reload(importlib.import_module("src.bot.core.config"))
@@ -33,7 +33,12 @@ def test_ask_api_client_accepts_answer_only(monkeypatch, tmp_path):
 
     async def scenario():
         async def handler(request: httpx.Request) -> httpx.Response:
-            assert request.headers["X-API-Key"] == "bot-test-api-key"
+            assert request.url == "http://test/telegram/ask"
+            assert request.headers["X-Telegram-Service-Key"] == ("bot-test-telegram-service-key")
+            assert json.loads(request.content.decode("utf-8")) == {
+                "question": "question",
+                "telegram_user_id": 101,
+            }
             return httpx.Response(
                 200,
                 json={
@@ -45,7 +50,7 @@ def test_ask_api_client_accepts_answer_only(monkeypatch, tmp_path):
         transport = httpx.MockTransport(handler)
         async with httpx.AsyncClient(transport=transport) as http_client:
             client = api_client.AskAPIClient(base_url="http://test", client=http_client)
-            result = await client.ask("question")
+            result = await client.ask("question", telegram_user_id=101)
 
         assert result.answer == "Ответ из API"
         assert result.sources[0].content == "Документ"
@@ -58,22 +63,23 @@ def test_ask_api_client_accepts_answer_only(monkeypatch, tmp_path):
         asyncio.run(database.engine.dispose())
 
 
-def test_ask_api_client_sends_optional_session_id(monkeypatch, tmp_path):
+def test_ask_api_client_sends_telegram_user_id(monkeypatch, tmp_path):
     database, _, api_client, _, _ = _load_bot_modules(monkeypatch, tmp_path)
 
     async def scenario():
         async def handler(request: httpx.Request) -> httpx.Response:
-            assert request.headers["X-API-Key"] == "bot-test-api-key"
+            assert request.url == "http://test/telegram/ask"
+            assert request.headers["X-Telegram-Service-Key"] == ("bot-test-telegram-service-key")
             assert json.loads(request.content.decode("utf-8")) == {
                 "question": "question",
-                "session_id": "tg:101",
+                "telegram_user_id": 101,
             }
             return httpx.Response(200, json={"answer": "ok", "sources": [], "metadata": {}})
 
         transport = httpx.MockTransport(handler)
         async with httpx.AsyncClient(transport=transport) as http_client:
             client = api_client.AskAPIClient(base_url="http://test", client=http_client)
-            result = await client.ask("question", session_id="tg:101")
+            result = await client.ask("question", telegram_user_id=101)
 
         assert result.answer == "ok"
 
@@ -94,7 +100,7 @@ def test_ask_api_client_raises_unauthorized(monkeypatch, tmp_path):
         async with httpx.AsyncClient(transport=transport) as http_client:
             client = api_client.AskAPIClient(base_url="http://test", client=http_client)
             try:
-                await client.ask("question")
+                await client.ask("question", telegram_user_id=101)
             except api_client.AskAPIUnauthorizedError:
                 return
         raise AssertionError("AskAPIUnauthorizedError was not raised")
@@ -122,7 +128,7 @@ def test_ask_api_client_extracts_service_error_details(monkeypatch, tmp_path):
         async with httpx.AsyncClient(transport=transport) as http_client:
             client = api_client.AskAPIClient(base_url="http://test", client=http_client)
             try:
-                await client.ask("question")
+                await client.ask("question", telegram_user_id=101)
             except api_client.AskAPIUnavailableError as exc:
                 assert exc.status_code == 503
                 assert exc.error_code == "vector_index_empty"
@@ -140,8 +146,9 @@ def test_process_text_question_saves_history_and_sends_reply(monkeypatch, tmp_pa
     database, _, api_client, service, models = _load_bot_modules(monkeypatch, tmp_path)
 
     class _FakeAPIClient:
-        async def ask(self, question: str):
+        async def ask(self, question: str, telegram_user_id: int):
             assert question == "Когда дедлайн?"
+            assert telegram_user_id == 101
             return api_client.AskResult(
                 answer="Дедлайн указан в LMS.",
                 sources=[
@@ -192,8 +199,9 @@ def test_process_text_question_escapes_malicious_answer_and_sources(monkeypatch,
     database, _, api_client, service, models = _load_bot_modules(monkeypatch, tmp_path)
 
     class _FakeAPIClient:
-        async def ask(self, question: str):
+        async def ask(self, question: str, telegram_user_id: int):
             assert question == "Можно ли доверять HTML?"
+            assert telegram_user_id == 112
             return api_client.AskResult(
                 answer="<b>ложное форматирование</b>",
                 sources=[
@@ -256,8 +264,9 @@ def test_process_text_question_escapes_untrusted_answer_text(
     database, _, api_client, service, _ = _load_bot_modules(monkeypatch, tmp_path)
 
     class _FakeAPIClient:
-        async def ask(self, question: str):
+        async def ask(self, question: str, telegram_user_id: int):
             assert question == "Проверка спецсимволов"
+            assert telegram_user_id == 113
             return api_client.AskResult(answer=answer, sources=[], metadata={})
 
     async def scenario():
@@ -288,8 +297,9 @@ def test_process_text_question_renders_unexpected_source_scheme_as_text(monkeypa
     database, _, api_client, service, _ = _load_bot_modules(monkeypatch, tmp_path)
 
     class _FakeAPIClient:
-        async def ask(self, question: str):
+        async def ask(self, question: str, telegram_user_id: int):
             assert question == "Источник?"
+            assert telegram_user_id == 114
             return api_client.AskResult(
                 answer="Ответ.",
                 sources=[
@@ -333,8 +343,9 @@ def test_process_text_question_splits_long_unsafe_text_on_html_entity_boundary(
     database, _, api_client, service, _ = _load_bot_modules(monkeypatch, tmp_path)
 
     class _FakeAPIClient:
-        async def ask(self, question: str):
+        async def ask(self, question: str, telegram_user_id: int):
             assert question == "Длинный ответ"
+            assert telegram_user_id == 115
             return api_client.AskResult(answer="&" * 1000, sources=[], metadata={})
 
     def assert_no_broken_html_entities(chunk: str) -> None:
@@ -377,7 +388,8 @@ def test_process_text_question_handles_timeout(monkeypatch, tmp_path, caplog):
     service.logger.propagate = True
 
     class _TimeoutAPIClient:
-        async def ask(self, question: str):
+        async def ask(self, question: str, telegram_user_id: int):
+            assert telegram_user_id == 202
             raise service.AskAPITimeoutError("timeout")
 
     async def scenario():
@@ -411,13 +423,13 @@ def test_process_text_question_handles_timeout(monkeypatch, tmp_path, caplog):
     assert "Timed out while processing question" in caplog.text
 
 
-def test_process_text_question_passes_session_id(monkeypatch, tmp_path):
+def test_process_text_question_passes_telegram_user_id(monkeypatch, tmp_path):
     database, _, api_client, service, _ = _load_bot_modules(monkeypatch, tmp_path)
 
     class _FakeAPIClient:
-        async def ask(self, question: str, session_id: str | None = None):
+        async def ask(self, question: str, telegram_user_id: int):
             assert question == "Когда дедлайн?"
-            assert session_id == "tg:101"
+            assert telegram_user_id == 101
             return api_client.AskResult(
                 answer="Дедлайн указан в LMS.",
                 sources=[],
@@ -453,7 +465,8 @@ def test_process_text_question_handles_api_unavailable(monkeypatch, tmp_path, ca
     service.logger.propagate = True
 
     class _UnavailableAPIClient:
-        async def ask(self, question: str):
+        async def ask(self, question: str, telegram_user_id: int):
+            assert telegram_user_id == 303
             raise service.AskAPIUnavailableError("down")
 
     async def scenario():
@@ -494,7 +507,8 @@ def test_process_text_question_handles_empty_index_without_stacktrace(
     service.logger.propagate = True
 
     class _UnavailableAPIClient:
-        async def ask(self, question: str):
+        async def ask(self, question: str, telegram_user_id: int):
+            assert telegram_user_id == 304
             raise service.AskAPIUnavailableError(
                 "API is unavailable",
                 status_code=503,
@@ -539,7 +553,8 @@ def test_process_text_question_handles_api_unauthorized(monkeypatch, tmp_path, c
     service.logger.propagate = True
 
     class _UnauthorizedAPIClient:
-        async def ask(self, question: str):
+        async def ask(self, question: str, telegram_user_id: int):
+            assert telegram_user_id == 909
             raise service.AskAPIUnauthorizedError("unauthorized")
 
     async def scenario():
@@ -578,7 +593,8 @@ def test_process_text_question_handles_invalid_api_payload(monkeypatch, tmp_path
     service.logger.propagate = True
 
     class _InvalidAPIClient:
-        async def ask(self, question: str):
+        async def ask(self, question: str, telegram_user_id: int):
+            assert telegram_user_id == 910
             raise service.AskAPIResponseError("invalid payload")
 
     async def scenario():
@@ -616,8 +632,9 @@ def test_process_question_saves_image_content_type(monkeypatch, tmp_path):
     database, _, api_client, service, models = _load_bot_modules(monkeypatch, tmp_path)
 
     class _FakeAPIClient:
-        async def ask(self, question: str):
+        async def ask(self, question: str, telegram_user_id: int):
             assert question == "Извлеченный текст"
+            assert telegram_user_id == 404
             return api_client.AskResult(
                 answer="Ответ по фото.",
                 sources=[
@@ -721,8 +738,9 @@ def test_process_text_question_hides_sources_when_disabled(monkeypatch, tmp_path
     database, _, api_client, service, models = _load_bot_modules(monkeypatch, tmp_path)
 
     class _FakeAPIClient:
-        async def ask(self, question: str):
+        async def ask(self, question: str, telegram_user_id: int):
             assert question == "Когда дедлайн?"
+            assert telegram_user_id == 111
             return api_client.AskResult(
                 answer="Дедлайн указан в LMS.",
                 sources=[
