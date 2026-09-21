@@ -22,6 +22,13 @@ from .vector import EmptyVectorStoreError, VectorStoreUnavailableError
 
 VECTOR_INDEX_EMPTY_MESSAGE = "Vector index is empty. Run indexing first."
 AskQuestion = Callable[[str, list[str] | None], Awaitable[RAGResponse]]
+POLICY_REJECTION_FALLBACK_REASONS = frozenset(
+    {
+        "policy_forbidden_control_or_secret_request",
+        "policy_forbidden_instruction_override",
+        "policy_output_violation",
+    }
+)
 
 
 def _conversation_memory_key_for_success(
@@ -30,6 +37,9 @@ def _conversation_memory_key_for_success(
 ) -> str | None:
     """Return a verified memory key only for successful RAG results."""
     if memory_key is None or not isinstance(result, RAGResponse):
+        return None
+    metadata = result.metadata if isinstance(result.metadata, dict) else {}
+    if metadata.get("fallback_reason") in POLICY_REJECTION_FALLBACK_REASONS:
         return None
     return memory_key
 
