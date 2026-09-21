@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Собирает .env.deploy из переменных CI/CD GitLab (Settings → CI/CD → Variables).
-# Обязательные: BOT_TOKEN, API_KEY, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB,
-#               WEB_BOOTSTRAP_ADMIN_TOKEN
+# Обязательные: BOT_TOKEN, API_KEY, TELEGRAM_SERVICE_KEY, POSTGRES_USER,
+#               POSTGRES_PASSWORD, POSTGRES_DB, WEB_BOOTSTRAP_ADMIN_TOKEN
 # Остальные — см. значения по умолчанию ниже.
 
 set -eu
@@ -13,7 +13,7 @@ append() {
   printf '%s=%s\n' "$1" "$2" >> "$OUT"
 }
 
-for v in BOT_TOKEN API_KEY POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB WEB_BOOTSTRAP_ADMIN_TOKEN; do
+for v in BOT_TOKEN API_KEY TELEGRAM_SERVICE_KEY POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB WEB_BOOTSTRAP_ADMIN_TOKEN; do
   eval "val=\${$v-}"
   if [ -z "$val" ]; then
     echo "render-env.sh: ERROR — задайте CI/CD variable: $v" >&2
@@ -30,6 +30,7 @@ fi
 append APP_ENV "${APP_ENV:-production}"
 append LOG_LEVEL "${LOG_LEVEL:-INFO}"
 append API_KEY "$API_KEY"
+append TELEGRAM_SERVICE_KEY "$TELEGRAM_SERVICE_KEY"
 append SHOW_SOURCES "${SHOW_SOURCES:-1}"
 append WEB_BOOTSTRAP_ADMIN_TOKEN "$WEB_BOOTSTRAP_ADMIN_TOKEN"
 append PREPARE_RAG_ON_STARTUP "${PREPARE_RAG_ON_STARTUP:-1}"
