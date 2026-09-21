@@ -118,6 +118,7 @@ DEFAULT_VECTOR_DB_DIR = SERVER_DIR / "chrome_langchain_db"
 DEFAULT_DOCUMENTS_DIR = _resolve_default_documents_dir()
 
 API_KEY = getenv("API_KEY")
+TELEGRAM_SERVICE_KEY = getenv("TELEGRAM_SERVICE_KEY")
 WEB_BOOTSTRAP_ADMIN_TOKEN = getenv("WEB_BOOTSTRAP_ADMIN_TOKEN")
 WEB_AUTH_DATABASE_URL = _resolve_web_auth_database_url()
 APP_ENV = getenv("APP_ENV", "development") or "development"
@@ -178,6 +179,8 @@ def validate_chunk_settings() -> None:
 def validate_runtime_config() -> None:
     if API_KEY is None:
         raise RuntimeError("API_KEY is not set")
+    if TELEGRAM_SERVICE_KEY is None:
+        raise RuntimeError("TELEGRAM_SERVICE_KEY is not set")
     if CONVERSATION_MEMORY_WINDOW <= 0:
         raise RuntimeError("CONVERSATION_MEMORY_WINDOW must be positive")
     if CONVERSATION_MEMORY_TTL_SECONDS <= 0:
