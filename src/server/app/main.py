@@ -44,7 +44,13 @@ from .metrics import rag_requests_total, render_metrics
 from .principal_context import PrincipalContext
 from .question_validation import QuestionValidationError, normalize_question
 from .rag import ask_question
-from .vector import EmptyVectorStoreError, clear_vector_cache, ensure_vector_store_ready
+from .readiness import readiness_state
+from .vector import (
+    EmptyVectorStoreError,
+    VectorStoreUnavailableError,
+    clear_vector_cache,
+    ensure_vector_store_ready,
+)
 
 setup_logging("server")
 logger = logging.getLogger("server")
@@ -77,9 +83,13 @@ conversation_memory_store = ConversationMemoryStore(
 )
 
 
-def _prepare_rag_runtime() -> None:
+def _prepare_rag_runtime(generation: int | None = None) -> None:
     if not config.PREPARE_RAG_ON_STARTUP:
         logger.info("Skipping RAG startup preparation", extra=log_extra(stage="startup"))
+        readiness_state.mark_rag_initializing(
+            generation=generation,
+            preparation_skipped=True,
+        )
         return
 
     logger.info("Preparing RAG runtime", extra=log_extra(stage="startup"))
@@ -108,6 +118,7 @@ def _prepare_rag_runtime() -> None:
         chunk_count,
         extra=log_extra(stage="startup"),
     )
+    readiness_state.mark_rag_ready(generation=generation, indexed_chunks=chunk_count)
 
 
 def _log_startup_indexing_summary(summary: IndexingSummary) -> None:
@@ -125,20 +136,43 @@ def _log_startup_indexing_summary(summary: IndexingSummary) -> None:
     )
 
 
+async def _rag_startup_worker(generation: int | None = None) -> None:
+    try:
+        await asyncio.to_thread(_prepare_rag_runtime, generation)
+    except Exception:
+        readiness_state.mark_rag_failed(
+            "rag_startup_preparation_failed",
+            generation=generation,
+        )
+        logger.exception(
+            "RAG startup preparation failed",
+            extra=log_extra(stage="startup", error_type="rag_startup"),
+        )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    await init_auth_db()
+    generation = readiness_state.reset()
 
-    async def _rag_startup_worker() -> None:
-        try:
-            await asyncio.to_thread(_prepare_rag_runtime)
-        except Exception:
-            logger.exception(
-                "RAG startup preparation failed",
-                extra=log_extra(stage="startup", error_type="rag_startup"),
-            )
+    try:
+        await init_auth_db()
+    except Exception:
+        readiness_state.mark_web_auth_failed(
+            "web_auth_db_init_failed",
+            generation=generation,
+        )
+        logger.exception(
+            "Web auth database initialization failed",
+            extra=log_extra(
+                stage="startup",
+                dependency="web_auth_db",
+                error_type="web_auth_db_init_failed",
+            ),
+        )
+    else:
+        readiness_state.mark_web_auth_ready(generation=generation)
 
-    rag_task = asyncio.create_task(_rag_startup_worker())
+    rag_task = asyncio.create_task(_rag_startup_worker(generation))
     try:
         yield
     finally:
@@ -180,7 +214,17 @@ def _error_response(message: str, status_code: int, *, code: str | None = None) 
 
 
 async def _call_ask_question(question: str, conversation_history: list[str] | None = None):
-    return await ask_question(question, conversation_history=conversation_history)
+    try:
+        response = await ask_question(question, conversation_history=conversation_history)
+    except EmptyVectorStoreError:
+        readiness_state.mark_rag_failed("rag_runtime_vector_index_empty")
+        raise
+    except VectorStoreUnavailableError:
+        readiness_state.mark_rag_failed("rag_runtime_vector_store_unavailable")
+        raise
+
+    readiness_state.observe_rag_response(response)
+    return response
 
 
 ask_service = AskService(
@@ -210,8 +254,16 @@ async def web_interface_redirect(_request: Request):
 
 
 @app.get("/health")
+@app.get("/live")
 async def health_check():
     return {"status": "ok"}
+
+
+@app.get("/ready")
+async def readiness_check():
+    payload = readiness_state.snapshot()
+    status_code = 200 if payload["status"] in {"ready", "degraded"} else 503
+    return JSONResponse(status_code=status_code, content=payload)
 
 
 @app.get("/metrics")
