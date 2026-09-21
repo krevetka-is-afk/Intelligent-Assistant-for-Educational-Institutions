@@ -12,7 +12,8 @@
 ## Что реализовано
 
 - `POST /ask` защищён заголовком `X-API-Key`
-- браузерный `/web` работает через bootstrap-admin, обычных web-пользователей и одноразовые invite-коды, а `POST /web/ask` использует HttpOnly-сессию без раскрытия backend `API_KEY` в JavaScript
+- браузерный `/web` работает через bootstrap-admin, обычных web-пользователей и одноразовые invite-коды, а
+  `POST /web/ask` использует HttpOnly-сессию без раскрытия backend `API_KEY` в JavaScript
 - FastAPI, Streamlit и Telegram-бот используют единый env-контракт и структурированное логирование
 - `docker-compose.yaml` поднимает `db`, `server`, `bot`, `client` с healthcheck и `restart: unless-stopped`
 - при сбоях LLM RAG возвращает fallback-ответ и логирует причину на уровне `ERROR`
@@ -21,34 +22,35 @@
 
 Основной шаблон конфигурации: [`.env.example`](.env.example)
 
-| Переменная | Где используется | Назначение |
-| --- | --- | --- |
-| `APP_ENV` | `server`, `bot`, `client` | Имя окружения для логов |
-| `LOG_LEVEL` | `server`, `bot`, `client` | Уровень логирования |
-| `API_KEY` | `server`, `bot`, `client` | Shared secret для `X-API-Key` |
-| `SHOW_SOURCES` | `server`, `bot`, `client` | Показывать ли источники в `/web`, Streamlit и Telegram-боте |
-| `WEB_BOOTSTRAP_ADMIN_TOKEN` | `server` | Bootstrap token для создания первого web-admin |
-| `WEB_AUTH_DATABASE_URL` | `server` | SQLAlchemy URL хранилища web users, invite-кодов и web-сессий. Если не задан, локально используется `./.web_auth.db`, а в контейнере `/data/web_auth.db` |
-| `API_BASE_URL` | `bot`, `client` | Базовый URL FastAPI |
-| `BOT_TOKEN` | `bot` | Telegram bot token |
-| `DATABASE_URL` | `bot` | SQLAlchemy URL для истории запросов |
-| `POSTGRES_DB` | `compose`, `db` | Имя базы PostgreSQL |
-| `POSTGRES_USER` | `compose`, `db` | Пользователь PostgreSQL |
-| `POSTGRES_PASSWORD` | `compose`, `db` | Пароль PostgreSQL |
-| `OLLAMA_HOST` | `server` | URL локальной Ollama |
-| `LLM_MODEL` | `server` | Модель LLM |
-| `HF_EMBEDDING_MODEL` | `server`, `indexer` | Модель эмбеддингов |
-| `CHROMA_COLLECTION_NAME` | `server`, `indexer` | Имя коллекции Chroma |
-| `VECTOR_DB_DIR` | `server`, `indexer` | Директория векторной БД |
-| `DOCUMENTS_DIR` | `server`, `indexer` | Каталог корпуса документов |
-| `RAG_TOP_K` | `server` | Сколько чанков доставать из Chroma |
-| `RAG_TOTAL_TIMEOUT_SECONDS` | `server` | Общий бюджет времени RAG |
-| `LLM_TIMEOUT_SECONDS` | `server` | Таймаут вызова LLM |
-| `CONVERSATION_MEMORY_WINDOW` | `server` | Размер окна памяти последних сообщений пользователя (по умолчанию `5`) |
-| `CONVERSATION_MEMORY_TTL_SECONDS` | `server` | TTL контекста диалога в секундах (по умолчанию `3600`) |
-| `CONVERSATION_MEMORY_MAX_SESSIONS` | `server` | Ограничение на число активных сессий контекста |
-| `PREPARE_RAG_ON_STARTUP` | `server` | Подготавливать ли embeddings/vector store до ready-состояния сервиса |
-| `AUTO_INDEX_ON_STARTUP` | `server` | Автоматически индексировать `DOCUMENTS_DIR`, если vector store пуст на старте |
+| Переменная                         | Где используется          | Назначение                                                                                                                                               |
+|------------------------------------|---------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `APP_ENV`                          | `server`, `bot`, `client` | Имя окружения для логов                                                                                                                                  |
+| `LOG_LEVEL`                        | `server`, `bot`, `client` | Уровень логирования                                                                                                                                      |
+| `API_KEY`                          | `server`, `client`        | Shared secret для `X-API-Key`                                                                                                                            |
+| `TELEGRAM_SERVICE_KEY`             | `server`, `bot`           | Отдельный служебный секрет для `X-Telegram-Service-Key`                                                                                                  |
+| `SHOW_SOURCES`                     | `server`, `bot`, `client` | Показывать ли источники в `/web`, Streamlit и Telegram-боте                                                                                              |
+| `WEB_BOOTSTRAP_ADMIN_TOKEN`        | `server`                  | Bootstrap token для создания первого web-admin                                                                                                           |
+| `WEB_AUTH_DATABASE_URL`            | `server`                  | SQLAlchemy URL хранилища web users, invite-кодов и web-сессий. Если не задан, локально используется `./.web_auth.db`, а в контейнере `/data/web_auth.db` |
+| `API_BASE_URL`                     | `bot`, `client`           | Базовый URL FastAPI                                                                                                                                      |
+| `BOT_TOKEN`                        | `bot`                     | Telegram bot token                                                                                                                                       |
+| `DATABASE_URL`                     | `bot`                     | SQLAlchemy URL для истории запросов                                                                                                                      |
+| `POSTGRES_DB`                      | `compose`, `db`           | Имя базы PostgreSQL                                                                                                                                      |
+| `POSTGRES_USER`                    | `compose`, `db`           | Пользователь PostgreSQL                                                                                                                                  |
+| `POSTGRES_PASSWORD`                | `compose`, `db`           | Пароль PostgreSQL                                                                                                                                        |
+| `OLLAMA_HOST`                      | `server`                  | URL локальной Ollama                                                                                                                                     |
+| `LLM_MODEL`                        | `server`                  | Модель LLM                                                                                                                                               |
+| `HF_EMBEDDING_MODEL`               | `server`, `indexer`       | Модель эмбеддингов                                                                                                                                       |
+| `CHROMA_COLLECTION_NAME`           | `server`, `indexer`       | Имя коллекции Chroma                                                                                                                                     |
+| `VECTOR_DB_DIR`                    | `server`, `indexer`       | Директория векторной БД                                                                                                                                  |
+| `DOCUMENTS_DIR`                    | `server`, `indexer`       | Каталог корпуса документов                                                                                                                               |
+| `RAG_TOP_K`                        | `server`                  | Сколько чанков доставать из Chroma                                                                                                                       |
+| `RAG_TOTAL_TIMEOUT_SECONDS`        | `server`                  | Общий бюджет времени RAG                                                                                                                                 |
+| `LLM_TIMEOUT_SECONDS`              | `server`                  | Таймаут вызова LLM                                                                                                                                       |
+| `CONVERSATION_MEMORY_WINDOW`       | `server`                  | Размер окна памяти последних сообщений пользователя (по умолчанию `5`)                                                                                   |
+| `CONVERSATION_MEMORY_TTL_SECONDS`  | `server`                  | TTL контекста диалога в секундах (по умолчанию `3600`)                                                                                                   |
+| `CONVERSATION_MEMORY_MAX_SESSIONS` | `server`                  | Ограничение на число активных сессий контекста                                                                                                           |
+| `PREPARE_RAG_ON_STARTUP`           | `server`                  | Подготавливать ли embeddings/vector store до ready-состояния сервиса                                                                                     |
+| `AUTO_INDEX_ON_STARTUP`            | `server`                  | Автоматически индексировать `DOCUMENTS_DIR`, если vector store пуст на старте                                                                            |
 
 `RAG_API_URL` оставлен только как legacy-алиас для Telegram-слоя и больше не является основной настройкой.
 
@@ -133,7 +135,17 @@ uv run uvicorn src.server.app.main:app --reload
 curl -X POST http://localhost:8000/ask \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
-  -d '{"question":"Когда пересдача?", "session_id":"tg:123456"}'
+  -d '{"question":"Когда пересдача?"}'
+```
+
+Telegram-бот обращается к отдельному служебному маршруту;
+сервер сам строит ключ памяти из проверенного `telegram_user_id`:
+
+```bash
+curl -X POST http://localhost:8000/telegram/ask \
+  -H "Content-Type: application/json" \
+  -H "X-Telegram-Service-Key: $TELEGRAM_SERVICE_KEY" \
+  -d '{"telegram_user_id":123456, "question":"Когда пересдача?"}'
 ```
 
 ### 5. Запуск Streamlit
@@ -174,7 +186,8 @@ docker compose --profile dev up --build
 - `server`: `GET /health`
 - `bot`: fail-fast старт + Docker restart policy
 
-Временные файлы и `/tmp` для `server`, `bot`, `client` вынесены в `tmpfs`. Operational-логи пишутся только в stdout/stderr контейнеров.
+Временные файлы и `/tmp` для `server`, `bot`, `client` вынесены в `tmpfs`. Operational-логи пишутся только в
+stdout/stderr контейнеров.
 
 ## Проверки
 
@@ -193,6 +206,8 @@ PYTHONPATH=. uv run isort --check-only .
 
 ## Документация
 
-- ТЗ: [`docs/technical-specification-for-IAfEI/ТЗ-общее/ТЗ-общее.pdf`](docs/technical-specification-for-IAfEI/ТЗ-общее/ТЗ-общее.pdf)
+- ТЗ: [
+  `docs/technical-specification-for-IAfEI/ТЗ-общее/ТЗ-общее.pdf`](docs/technical-specification-for-IAfEI/ТЗ-общее/ТЗ-общее.pdf)
 
-- Референс по структуре ТЗ: [`docs/technical-specification-for-IAfEI/README.md`](docs/technical-specification-for-IAfEI/README.md)
+- Референс по структуре ТЗ: [
+  `docs/technical-specification-for-IAfEI/README.md`](docs/technical-specification-for-IAfEI/README.md)
