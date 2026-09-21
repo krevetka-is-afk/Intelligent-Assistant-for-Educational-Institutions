@@ -28,6 +28,25 @@ def _reload_config(monkeypatch, *, vector_db_dir: str | None, documents_dir: str
     return importlib.reload(module)
 
 
+def _reload_config_for_env(monkeypatch, **env: str):
+    keys = {
+        "APP_ENV",
+        "AUTO_INDEX_ON_STARTUP",
+        "RAG_MAX_CONTEXT_DOCUMENTS",
+        "RAG_MAX_DOCUMENT_CHARS",
+        "RAG_MAX_TOTAL_CONTEXT_CHARS",
+        "RAG_MAX_HISTORY_MESSAGES",
+        "RAG_MAX_HISTORY_CHARS",
+        "RAG_SOURCE_SNIPPET_CHARS",
+    }
+    for key in keys:
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    module = importlib.import_module("src.server.app.config")
+    return importlib.reload(module)
+
+
 def _reload_config_with_auth_url(
     monkeypatch,
     *,
@@ -75,3 +94,28 @@ def test_show_sources_flag_can_be_disabled(monkeypatch):
     config = _reload_config(monkeypatch, vector_db_dir=None, documents_dir=None)
 
     assert config.SHOW_SOURCES is False
+
+
+def test_auto_index_defaults_to_disabled_in_production(monkeypatch):
+    config = _reload_config_for_env(monkeypatch, APP_ENV="production")
+
+    assert config.AUTO_INDEX_ON_STARTUP is False
+
+
+def test_rag_policy_limits_are_configurable(monkeypatch):
+    config = _reload_config_for_env(
+        monkeypatch,
+        RAG_MAX_CONTEXT_DOCUMENTS="2",
+        RAG_MAX_DOCUMENT_CHARS="300",
+        RAG_MAX_TOTAL_CONTEXT_CHARS="500",
+        RAG_MAX_HISTORY_MESSAGES="3",
+        RAG_MAX_HISTORY_CHARS="400",
+        RAG_SOURCE_SNIPPET_CHARS="120",
+    )
+
+    assert config.RAG_MAX_CONTEXT_DOCUMENTS == 2
+    assert config.RAG_MAX_DOCUMENT_CHARS == 300
+    assert config.RAG_MAX_TOTAL_CONTEXT_CHARS == 500
+    assert config.RAG_MAX_HISTORY_MESSAGES == 3
+    assert config.RAG_MAX_HISTORY_CHARS == 400
+    assert config.RAG_SOURCE_SNIPPET_CHARS == 120
