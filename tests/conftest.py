@@ -6,6 +6,7 @@ import pytest
 from starlette.testclient import TestClient
 
 os.environ["API_KEY"] = "test-api-key"
+os.environ["TELEGRAM_SERVICE_KEY"] = "test-telegram-service-key"
 os.environ["SHOW_SOURCES"] = "1"
 TEST_WEB_AUTH_DB_PATH = (
     Path(__file__).resolve().parent / ".tmp" / "intelligent_assistant_test_web_auth.db"
@@ -20,6 +21,7 @@ from src.server.app.auth_models import Base  # noqa: E402
 from src.server.app.main import app, limiter  # noqa: E402
 
 TEST_API_KEY = "test-api-key"
+TEST_TELEGRAM_SERVICE_KEY = "test-telegram-service-key"
 TEST_BOOTSTRAP_TOKEN = "bootstrap-test-token"
 
 
@@ -51,6 +53,11 @@ def reset_web_auth_db():
 @pytest.fixture
 def auth_headers():
     return {"X-API-Key": TEST_API_KEY}
+
+
+@pytest.fixture
+def telegram_service_headers():
+    return {"X-Telegram-Service-Key": TEST_TELEGRAM_SERVICE_KEY}
 
 
 @pytest.fixture
