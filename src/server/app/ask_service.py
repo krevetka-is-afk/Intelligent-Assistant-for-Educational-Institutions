@@ -24,6 +24,16 @@ VECTOR_INDEX_EMPTY_MESSAGE = "Vector index is empty. Run indexing first."
 AskQuestion = Callable[[str, list[str] | None], Awaitable[RAGResponse]]
 
 
+def _conversation_memory_key_for_success(
+    memory_key: str | None,
+    result: RAGResponse | None,
+) -> str | None:
+    """Return a verified memory key only for successful RAG results."""
+    if memory_key is None or not isinstance(result, RAGResponse):
+        return None
+    return memory_key
+
+
 class AskService:
     def __init__(
         self,
@@ -139,9 +149,12 @@ class AskService:
                 "Failed to generate a response. Please try again later.", 500
             )
 
-        if memory_key is not None:
+        if memory_key_to_store := _conversation_memory_key_for_success(memory_key, result):
             try:
-                await self._memory_store.append_user_message(memory_key, normalized_question)
+                await self._memory_store.append_user_message(
+                    memory_key_to_store,
+                    normalized_question,
+                )
                 self._logger.info(
                     "Stored conversation message scope=%s",
                     principal.authority,
