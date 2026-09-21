@@ -51,7 +51,7 @@ services:
           "CMD",
           "/app/bin/python",
           "-c",
-          "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health', timeout=8).read()",
+          "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/ready', timeout=8).read()",
         ]
       interval: 15s
       timeout: 10s
