@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import zipfile
+from hashlib import sha256
 from pathlib import Path
 
 from langchain_chroma import Chroma
@@ -100,6 +101,9 @@ def test_build_chunk_records_preserves_metadata(tmp_path):
     assert chunks[0].metadata["document_id"] == parsed.document_id
     assert chunks[0].metadata["chunk_id"] == chunks[0].id
     assert chunks[0].metadata["source"] == "handbook.txt"
+    assert chunks[0].metadata["source_type"] == "txt"
+    assert chunks[0].metadata["source_size"] == txt_path.stat().st_size
+    assert chunks[0].metadata["source_sha256"] == sha256(txt_path.read_bytes()).hexdigest()
     assert chunks[0].metadata["indexed_at"] == "2026-03-22T00:00:00Z"
 
 
