@@ -49,6 +49,9 @@ class ParsedDocument:
     source: str
     title: str
     mime_type: str
+    source_type: str
+    source_size: int
+    source_sha256: str
     sections: list[TextSection]
 
 
@@ -293,11 +296,15 @@ def load_document(path: Path, *, root_dir: Path) -> ParsedDocument:
 
     title, sections = loaders[suffix](path)
     relative_path = path.resolve().relative_to(root_dir.resolve())
+    raw_content = path.read_bytes()
     return ParsedDocument(
         document_id=build_document_id(relative_path),
         source=relative_path.as_posix(),
         title=title,
         mime_type=MIME_TYPES[suffix],
+        source_type=suffix.lstrip("."),
+        source_size=len(raw_content),
+        source_sha256=sha256(raw_content).hexdigest(),
         sections=sections,
     )
 
@@ -327,6 +334,9 @@ def build_chunk_records(
                 "source": parsed_document.source,
                 "title": parsed_document.title,
                 "mime_type": parsed_document.mime_type,
+                "source_type": parsed_document.source_type,
+                "source_size": parsed_document.source_size,
+                "source_sha256": parsed_document.source_sha256,
                 "char_start": section.base_offset + start,
                 "char_end": section.base_offset + end,
                 "indexed_at": timestamp,
