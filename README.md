@@ -152,7 +152,9 @@ uv run uvicorn src.server.app.main:app --reload
 
 Основные endpoints:
 
-- `GET /health`
+- `GET /health` и `GET /live` — liveness HTTP-процесса (без проверки зависимостей)
+- `GET /ready` — readiness RAG-сервиса: `initializing`/`failed` → HTTP 503,
+  `ready`/`degraded` → HTTP 200; поле `checks` отдельно показывает состояния `rag` и `web_auth`
 - `GET /metrics` c `X-API-Key`
 - `GET /web`
 - `POST /web/bootstrap`
@@ -216,7 +218,7 @@ docker compose --profile dev up --build
 Проверки состояния:
 
 - `db`: `pg_isready`
-- `server`: `GET /health`
+- `server`: `GET /ready` для Docker readiness; `GET /health` и `GET /live` только для liveness
 - `bot`: fail-fast старт + Docker restart policy
 
 Временные файлы и `/tmp` для `server`, `bot`, `client` вынесены в `tmpfs`. Operational-логи пишутся только в
