@@ -20,6 +20,7 @@ from slowapi.util import get_remote_address
 from app_runtime import log_extra, setup_logging
 
 from . import config
+from .ask_service import AskService
 from .auth_crud import (
     BootstrapAlreadyConfiguredError,
     ExpiredInviteError,
@@ -39,23 +40,11 @@ from .auth_database import dispose_auth_db, init_auth_db
 from .auth_models import WebUser
 from .conversation_memory import ConversationMemoryStore
 from .document_ingestion import IndexingSummary, index_directory
-from .metrics import (
-    rag_errors_total,
-    rag_fallback_total,
-    rag_generation_seconds,
-    rag_requests_total,
-    rag_retrieval_seconds,
-    rag_total_seconds,
-    render_metrics,
-)
+from .metrics import rag_requests_total, render_metrics
+from .principal_context import PrincipalContext
 from .question_validation import QuestionValidationError, normalize_question
 from .rag import ask_question
-from .vector import (
-    EmptyVectorStoreError,
-    VectorStoreUnavailableError,
-    clear_vector_cache,
-    ensure_vector_store_ready,
-)
+from .vector import EmptyVectorStoreError, clear_vector_cache, ensure_vector_store_ready
 
 setup_logging("server")
 logger = logging.getLogger("server")
@@ -77,7 +66,6 @@ WEB_CREDENTIALS_VALIDATION_MESSAGE = (
 )
 WEB_INVITE_EXPIRY_VALIDATION_MESSAGE = "Срок действия инвайта должен\
      быть положительным числом часов."
-VECTOR_INDEX_EMPTY_MESSAGE = "Vector index is empty. Run indexing first."
 SESSION_ID_MAX_LENGTH = 128
 SESSION_ID_VALIDATION_MESSAGE = (
     f"session_id must be a non-empty string up to {SESSION_ID_MAX_LENGTH} characters"
@@ -180,7 +168,7 @@ app.add_middleware(
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-API-Key"],
+    allow_headers=["Content-Type", "X-API-Key", "X-Telegram-Service-Key"],
 )
 
 
@@ -189,6 +177,17 @@ def _error_response(message: str, status_code: int, *, code: str | None = None) 
     if code is not None:
         content["code"] = code
     return JSONResponse(status_code=status_code, content=content)
+
+
+async def _call_ask_question(question: str, conversation_history: list[str] | None = None):
+    return await ask_question(question, conversation_history=conversation_history)
+
+
+ask_service = AskService(
+    memory_store=conversation_memory_store,
+    ask_question=_call_ask_question,
+    logger=logger,
+)
 
 
 class UnauthorizedAPIKeyError(RuntimeError):
@@ -239,6 +238,13 @@ async def verify_api_key(x_api_key: str | None = Header(default=None, alias="X-A
 
 def _is_valid_api_key(candidate: str | None) -> bool:
     return candidate is not None and hmac.compare_digest(candidate, config.API_KEY or "")
+
+
+def _is_valid_telegram_service_key(candidate: str | None) -> bool:
+    return candidate is not None and hmac.compare_digest(
+        candidate,
+        config.TELEGRAM_SERVICE_KEY or "",
+    )
 
 
 def _is_valid_bootstrap_token(candidate: str | None) -> bool:
@@ -342,6 +348,17 @@ async def verify_web_access(
         extra=log_extra(endpoint="/web/ask", error_type="unauthorized"),
     )
     raise UnauthorizedAPIKeyError("Unauthorized")
+
+
+async def verify_telegram_service_key(
+    x_telegram_service_key: str | None = Header(default=None, alias="X-Telegram-Service-Key"),
+) -> None:
+    if not _is_valid_telegram_service_key(x_telegram_service_key):
+        logger.warning(
+            "Rejected unauthorized Telegram service request",
+            extra=log_extra(endpoint="/telegram/ask", error_type="unauthorized"),
+        )
+        raise UnauthorizedAPIKeyError("Unauthorized")
 
 
 @app.post("/web/login")
@@ -560,7 +577,6 @@ async def web_logout(request: Request) -> RedirectResponse:
 @dataclass(slots=True)
 class ParsedQuestion:
     question: str
-    session_id: str | None
 
 
 def _normalize_session_id(value: object) -> str | None:
@@ -575,6 +591,12 @@ def _normalize_session_id(value: object) -> str | None:
     if len(session_id) > SESSION_ID_MAX_LENGTH:
         raise ValueError(f"session_id must not exceed {SESSION_ID_MAX_LENGTH} characters")
     return session_id
+
+
+@dataclass(slots=True)
+class ParsedTelegramQuestion:
+    question: str
+    telegram_user_id: int
 
 
 async def _parse_question(
@@ -611,7 +633,7 @@ async def _parse_question(
         return _error_response(str(exc), 400)
 
     try:
-        session_id = _normalize_session_id(data.get("session_id"))
+        _normalize_session_id(data.get("session_id"))
     except ValueError:
         logger.warning(
             "Invalid session_id",
@@ -624,161 +646,50 @@ async def _parse_question(
         )
         return _error_response(SESSION_ID_VALIDATION_MESSAGE, 400)
 
-    return ParsedQuestion(question=question, session_id=session_id)
+    return ParsedQuestion(question=question)
 
 
-async def _process_question(
-    question: str,
-    *,
-    request_id: str,
-    endpoint: str,
-    conversation_key: str | None = None,
-    web_user_id: int | None = None,
-) -> dict[str, object] | JSONResponse:
-    web_user_id_value = str(web_user_id) if web_user_id is not None else None
-    logger.info(
-        "Processing question length=%s",
-        len(question),
-        extra=log_extra(
-            request_id=request_id,
-            endpoint=endpoint,
-            stage="request",
-            web_user_id=web_user_id_value,
-        ),
-    )
+async def _parse_telegram_question(
+    request: Request, *, request_id: str
+) -> ParsedTelegramQuestion | JSONResponse:
+    endpoint = "/telegram/ask"
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        logger.warning(
+            "Malformed JSON in request body",
+            extra=log_extra(
+                request_id=request_id,
+                endpoint=endpoint,
+                stage="validation",
+                error_type="invalid_json",
+            ),
+        )
+        return _error_response("Invalid JSON in request body", 400)
+    if not isinstance(data, dict):
+        return _error_response("Invalid JSON in request body", 400)
 
-    conversation_history: list[str] = []
-    if conversation_key is not None:
-        try:
-            conversation_history = await conversation_memory_store.get_recent_user_messages(
-                conversation_key
-            )
-            conversation_scope = conversation_key.split(":", maxsplit=1)[0]
-            logger.info(
-                "Loaded conversation history scope=%s messages=%s",
-                conversation_scope,
-                len(conversation_history),
-                extra=log_extra(
-                    request_id=request_id,
-                    endpoint=endpoint,
-                    stage="conversation_memory",
-                    web_user_id=web_user_id_value,
-                ),
-            )
-        except Exception:
-            logger.exception(
-                "Failed to load conversation history",
-                extra=log_extra(
-                    request_id=request_id,
-                    endpoint=endpoint,
-                    stage="conversation_memory",
-                    error_type="conversation_read_failed",
-                    web_user_id=web_user_id_value,
-                ),
-            )
-            conversation_history = []
+    telegram_user_id = data.get("telegram_user_id")
+    if isinstance(telegram_user_id, bool) or not isinstance(telegram_user_id, int):
+        return _error_response("telegram_user_id must be a positive integer", 400)
+    if telegram_user_id <= 0:
+        return _error_response("telegram_user_id must be a positive integer", 400)
 
     try:
-        result = await ask_question(question, conversation_history=conversation_history)
-    except EmptyVectorStoreError as exc:
-        rag_errors_total.labels(stage="vector_store").inc()
+        question = normalize_question(data.get("question"))
+    except QuestionValidationError as exc:
         logger.warning(
-            "Vector store is empty: %s",
-            exc,
+            "Question validation failed",
             extra=log_extra(
                 request_id=request_id,
                 endpoint=endpoint,
-                stage="vector_store",
-                error_type=type(exc).__name__,
+                stage="validation",
+                error_type=exc.code,
             ),
         )
-        return _error_response(VECTOR_INDEX_EMPTY_MESSAGE, 503, code="vector_index_empty")
-    except VectorStoreUnavailableError:
-        rag_errors_total.labels(stage="vector_store").inc()
-        logger.exception(
-            "Vector store failure",
-            extra=log_extra(
-                request_id=request_id,
-                endpoint=endpoint,
-                stage="vector_store",
-                error_type="VectorStoreUnavailableError",
-            ),
-        )
-        return _error_response(
-            "Vector store is unavailable. Please try again later.",
-            503,
-            code="vector_store_unavailable",
-        )
-    except Exception:
-        rag_errors_total.labels(stage="unexpected").inc()
-        logger.exception(
-            "Unexpected request failure",
-            extra=log_extra(
-                request_id=request_id,
-                endpoint=endpoint,
-                stage="request",
-                error_type="unexpected",
-            ),
-        )
-        return _error_response("Failed to generate a response. Please try again later.", 500)
-    finally:
-        if conversation_key is not None:
-            try:
-                await conversation_memory_store.append_user_message(conversation_key, question)
-                conversation_scope = conversation_key.split(":", maxsplit=1)[0]
-                logger.info(
-                    "Stored conversation message scope=%s",
-                    conversation_scope,
-                    extra=log_extra(
-                        request_id=request_id,
-                        endpoint=endpoint,
-                        stage="conversation_memory",
-                        web_user_id=web_user_id_value,
-                    ),
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to persist conversation memory",
-                    extra=log_extra(
-                        request_id=request_id,
-                        endpoint=endpoint,
-                        stage="conversation_memory",
-                        error_type="conversation_write_failed",
-                        web_user_id=web_user_id_value,
-                    ),
-                )
+        return _error_response(str(exc), 400)
 
-    metadata = result.metadata
-    rag_retrieval_seconds.observe(metadata["retrieval_time_ms"] / 1000)
-    rag_generation_seconds.observe(metadata["generation_time_ms"] / 1000)
-    rag_total_seconds.observe(metadata["total_time_ms"] / 1000)
-    if metadata["fallback_used"]:
-        rag_fallback_total.inc()
-
-    logger.info(
-        (
-            "Completed request retrieved=%s fallback=%s reason=%s "
-            "retrieval_ms=%s generation_ms=%s total_ms=%s"
-        ),
-        len(result.retrieved_documents),
-        metadata["fallback_used"],
-        metadata["fallback_reason"],
-        metadata["retrieval_time_ms"],
-        metadata["generation_time_ms"],
-        metadata["total_time_ms"],
-        extra=log_extra(
-            request_id=request_id,
-            endpoint=endpoint,
-            stage="response",
-            web_user_id=web_user_id_value,
-        ),
-    )
-
-    return {
-        "answer": result.answer,
-        "sources": result.sources,
-        "metadata": metadata,
-    }
+    return ParsedTelegramQuestion(question=question, telegram_user_id=telegram_user_id)
 
 
 @app.post("/ask")
@@ -791,14 +702,11 @@ async def ask(request: Request, _: None = Depends(verify_api_key)):
     if isinstance(parsed, JSONResponse):
         return parsed
 
-    conversation_key = None
-
-    return await _process_question(
+    return await ask_service.ask(
         parsed.question,
         request_id=request_id,
         endpoint="/ask",
-        conversation_key=conversation_key,
-        web_user_id=None,
+        principal=PrincipalContext.generic_api(),
     )
 
 
@@ -813,12 +721,33 @@ async def ask_from_web(request: Request, _: None = Depends(verify_web_access)):
         return parsed
 
     current_user = await _get_current_web_user(request)
-    conversation_key = f"web:{current_user.id}" if current_user is not None else None
+    principal = (
+        PrincipalContext.web_user(current_user.id)
+        if current_user is not None
+        else PrincipalContext.generic_api()
+    )
 
-    return await _process_question(
+    return await ask_service.ask(
         parsed.question,
         request_id=request_id,
         endpoint="/web/ask",
-        conversation_key=conversation_key,
-        web_user_id=current_user.id if current_user is not None else None,
+        principal=principal,
+    )
+
+
+@app.post("/telegram/ask")
+@limiter.limit("10/minute")
+async def ask_from_telegram(request: Request, _: None = Depends(verify_telegram_service_key)):
+    request_id = uuid4().hex[:12]
+    rag_requests_total.inc()
+
+    parsed = await _parse_telegram_question(request, request_id=request_id)
+    if isinstance(parsed, JSONResponse):
+        return parsed
+
+    return await ask_service.ask(
+        parsed.question,
+        request_id=request_id,
+        endpoint="/telegram/ask",
+        principal=PrincipalContext.telegram_user(parsed.telegram_user_id),
     )
