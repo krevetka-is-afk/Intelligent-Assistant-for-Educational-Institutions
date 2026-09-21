@@ -609,6 +609,34 @@ def test_web_ask_with_api_key_does_not_use_caller_controlled_session_memory(
     ]
 
 
+def test_web_ask_with_cookie_and_api_key_uses_verified_web_memory(
+    client, auth_headers, monkeypatch, bootstrap_token
+):
+    captured_histories: list[list[str]] = []
+
+    async def _capture_ask(
+        question: str, conversation_history: list[str] | None = None
+    ) -> RAGResponse:
+        captured_histories.append(list(conversation_history or []))
+        return RAGResponse(
+            answer=f"ok: {question}",
+            sources=[],
+            metadata=_rag_metadata(),
+            retrieved_documents=[],
+        )
+
+    monkeypatch.setattr("src.server.app.main.ask_question", _capture_ask)
+    bootstrap_response = _bootstrap_admin(client, bootstrap_token)
+    assert bootstrap_response.status_code == 303
+
+    first = client.post("/web/ask", json={"question": "Web A1"}, headers=auth_headers)
+    second = client.post("/web/ask", json={"question": "Web A2"}, headers=auth_headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert captured_histories == [[], ["Web A1"]]
+
+
 def test_web_ask_uses_web_user_memory_key(client, monkeypatch, bootstrap_token):
     captured_histories: list[list[str]] = []
 
@@ -633,3 +661,94 @@ def test_web_ask_uses_web_user_memory_key(client, monkeypatch, bootstrap_token):
     assert first.status_code == 200
     assert second.status_code == 200
     assert captured_histories == [[], ["Первый вопрос"]]
+
+
+def test_telegram_ask_memory_isolated_between_users(client, telegram_service_headers, monkeypatch):
+    captured_histories: list[list[str]] = []
+
+    async def _capture_ask(
+        question: str, conversation_history: list[str] | None = None
+    ) -> RAGResponse:
+        captured_histories.append(list(conversation_history or []))
+        return RAGResponse(
+            answer=f"ok: {question}",
+            sources=[],
+            metadata=_rag_metadata(),
+            retrieved_documents=[],
+        )
+
+    monkeypatch.setattr("src.server.app.main.ask_question", _capture_ask)
+
+    requests = [
+        {"telegram_user_id": 101, "question": "A1"},
+        {"telegram_user_id": 202, "question": "B1"},
+        {"telegram_user_id": 101, "question": "A2"},
+        {"telegram_user_id": 202, "question": "B2"},
+    ]
+    for payload in requests:
+        response = client.post(
+            "/telegram/ask",
+            json=payload,
+            headers=telegram_service_headers,
+        )
+        assert response.status_code == 200
+
+    assert captured_histories == [[], [], ["A1"], ["B1"]]
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {"X-Telegram-Service-Key": "wrong"},
+        {"X-API-Key": "test-api-key"},
+    ],
+    ids=["missing", "wrong", "generic-api-key"],
+)
+def test_telegram_ask_rejects_invalid_service_key_before_rag(client, monkeypatch, headers):
+    rag_calls = []
+
+    async def unexpected_rag_call(question, conversation_history=None):
+        rag_calls.append(question)
+        raise AssertionError("Unauthorized Telegram request must not reach RAG")
+
+    monkeypatch.setattr("src.server.app.main.ask_question", unexpected_rag_call)
+
+    response = client.post(
+        "/telegram/ask",
+        json={"telegram_user_id": 101, "question": "Hello world"},
+        headers=headers,
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Unauthorized"}
+    assert rag_calls == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"question": "Hello world"},
+        {"telegram_user_id": 0, "question": "Hello world"},
+        {"telegram_user_id": -1, "question": "Hello world"},
+        {"telegram_user_id": "101", "question": "Hello world"},
+        {"telegram_user_id": True, "question": "Hello world"},
+    ],
+    ids=["missing", "zero", "negative", "string", "bool"],
+)
+def test_telegram_ask_rejects_invalid_telegram_user_id(
+    client, telegram_service_headers, monkeypatch, payload
+):
+    rag_calls = []
+
+    async def unexpected_rag_call(question, conversation_history=None):
+        rag_calls.append(question)
+        raise AssertionError("Invalid Telegram user id must not reach RAG")
+
+    monkeypatch.setattr("src.server.app.main.ask_question", unexpected_rag_call)
+
+    response = client.post("/telegram/ask", json=payload, headers=telegram_service_headers)
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "telegram_user_id must be a positive integer"}
+    assert rag_calls == []
