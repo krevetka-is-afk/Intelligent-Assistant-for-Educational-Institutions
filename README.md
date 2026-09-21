@@ -44,6 +44,12 @@
 | `VECTOR_DB_DIR`                    | `server`, `indexer`       | Директория векторной БД                                                                                                                                  |
 | `DOCUMENTS_DIR`                    | `server`, `indexer`       | Каталог корпуса документов                                                                                                                               |
 | `RAG_TOP_K`                        | `server`                  | Сколько чанков доставать из Chroma                                                                                                                       |
+| `RAG_MAX_CONTEXT_DOCUMENTS`        | `server`                  | Максимальное число найденных фрагментов, попадающих в prompt                                                                                             |
+| `RAG_MAX_DOCUMENT_CHARS`           | `server`                  | Максимальная длина одного фрагмента в prompt                                                                                                             |
+| `RAG_MAX_TOTAL_CONTEXT_CHARS`      | `server`                  | Общий лимит символов документного контекста в prompt                                                                                                     |
+| `RAG_MAX_HISTORY_MESSAGES`         | `server`                  | Максимальное число сообщений истории, передаваемых модели как недоверенные данные                                                                        |
+| `RAG_MAX_HISTORY_CHARS`            | `server`                  | Общий лимит символов истории в prompt                                                                                                                    |
+| `RAG_SOURCE_SNIPPET_CHARS`         | `server`                  | Максимальная длина возвращаемой цитаты источника, включая многоточие при обрезке                                                                         |
 | `RAG_TOTAL_TIMEOUT_SECONDS`        | `server`                  | Общий бюджет времени RAG                                                                                                                                 |
 | `LLM_TIMEOUT_SECONDS`              | `server`                  | Таймаут вызова LLM                                                                                                                                       |
 | `CONVERSATION_MEMORY_WINDOW`       | `server`                  | Размер окна памяти последних сообщений пользователя (по умолчанию `5`)                                                                                   |
@@ -53,6 +59,33 @@
 | `AUTO_INDEX_ON_STARTUP`            | `server`                  | Автоматически индексировать `DOCUMENTS_DIR`, если vector store пуст на старте                                                                            |
 
 `RAG_API_URL` оставлен только как legacy-алиас для Telegram-слоя и больше не является основной настройкой.
+
+## RAG security barriers
+
+RAG-запросы проходят через единую политику `rag-prompt-policy-v1`. Доверенные правила находятся
+только в system role, а вопрос, история и найденные документы передаются модели одной user role
+как JSON-данные. Строки из корпуса и истории не интерпретируются как разметка ролей, даже если
+содержат `</document>`, `<system>` или похожие маркеры.
+
+До вызова retrieval/LLM сервер отклоняет запросы на раскрытие system prompt, правил, API keys,
+cookies, connection strings и служебной конфигурации. Такие ответы имеют `fallback_used=true` и `fallback_reason`,
+например `policy_forbidden_control_or_secret_request` или
+`policy_forbidden_instruction_override`; полный system text наружу не возвращается.
+
+Контекст ограничивается детерминированными env-переменными `RAG_MAX_CONTEXT_DOCUMENTS`,
+`RAG_MAX_DOCUMENT_CHARS`, `RAG_MAX_TOTAL_CONTEXT_CHARS`, `RAG_MAX_HISTORY_MESSAGES` и
+`RAG_MAX_HISTORY_CHARS`. Источники в API-ответе возвращаются только из фактически найденных
+документов, с allowlisted metadata и коротким snippet не длиннее `RAG_SOURCE_SNIPPET_CHARS`.
+Если модель пытается сослаться на не найденный filename/title/URL или раскрыть служебные маркеры,
+ответ заменяется безопасным отказом с `fallback_reason=policy_output_violation`.
+
+Policy refusals не записываются в conversation memory и не отравляют следующий запрос. Обычный
+успешный fallback при недоступной модели (`llm_timeout`/`llm_unavailable`) продолжает считаться
+ответом по найденным документам и сохраняется по действующему контракту памяти.
+
+В production автоиндексация отключена по умолчанию: `AUTO_INDEX_ON_STARTUP=0`. Корпус нужно
+индексировать явной командой после ручного просмотра состава документов; закрытые документы не
+следует добавлять в выпускной корпус без правил доступа.
 
 ## Локальный запуск
 
