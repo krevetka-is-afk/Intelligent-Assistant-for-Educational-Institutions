@@ -15,9 +15,11 @@ logger = logging.getLogger("bot.api")
 DEFAULT_API_BASE_URL = (
     os.getenv("API_BASE_URL") or os.getenv("RAG_API_URL", "http://localhost:8000/ask")
 ).rstrip("/")
-if DEFAULT_API_BASE_URL.endswith("/ask"):
-    DEFAULT_API_BASE_URL = DEFAULT_API_BASE_URL[: -len("/ask")]
-DEFAULT_API_KEY = os.getenv("API_KEY")
+for suffix in ("/telegram/ask", "/ask"):
+    if DEFAULT_API_BASE_URL.endswith(suffix):
+        DEFAULT_API_BASE_URL = DEFAULT_API_BASE_URL[: -len(suffix)]
+        break
+DEFAULT_TELEGRAM_SERVICE_KEY = os.getenv("TELEGRAM_SERVICE_KEY")
 DEFAULT_TIMEOUT_SECONDS = float(os.getenv("BOT_API_TIMEOUT_SECONDS", "480") or "480")
 
 
@@ -39,11 +41,11 @@ class AskAPIError(Exception):
 
 
 class AskAPITimeoutError(AskAPIError):
-    """Raised when /ask does not respond within the timeout."""
+    """Raised when /telegram/ask does not respond within the timeout."""
 
 
 class AskAPIUnavailableError(AskAPIError):
-    """Raised when /ask is unreachable or returns 5xx."""
+    """Raised when /telegram/ask is unreachable or returns 5xx."""
 
     def __init__(
         self,
@@ -60,54 +62,54 @@ class AskAPIUnavailableError(AskAPIError):
 
 
 class AskAPIUnauthorizedError(AskAPIError):
-    """Raised when /ask rejects the configured API key."""
+    """Raised when /telegram/ask rejects the configured service key."""
 
 
 class AskAPIResponseError(AskAPIError):
-    """Raised when /ask returns an unexpected payload."""
+    """Raised when /telegram/ask returns an unexpected payload."""
 
 
 class AskAPIClient:
     def __init__(
         self,
         base_url: str | None = None,
-        api_key: str | None = DEFAULT_API_KEY,
+        service_key: str | None = DEFAULT_TELEGRAM_SERVICE_KEY,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         resolved_base_url = (base_url or DEFAULT_API_BASE_URL).rstrip("/")
-        self.api_url = f"{resolved_base_url}/ask"
-        self.api_key = api_key
+        self.api_url = f"{resolved_base_url}/telegram/ask"
+        self.service_key = service_key
         self.timeout_seconds = timeout_seconds
         self._client = client
 
-    async def ask(self, question: str, session_id: str | None = None) -> AskResult:
+    async def ask(self, question: str, telegram_user_id: int) -> AskResult:
         normalized_question = question.strip()
         if not normalized_question:
             raise ValueError("Question must be a non-empty string")
-        normalized_session_id = session_id.strip() if isinstance(session_id, str) else None
-        if normalized_session_id == "":
-            normalized_session_id = None
+        if (
+            isinstance(telegram_user_id, bool)
+            or not isinstance(telegram_user_id, int)
+            or telegram_user_id <= 0
+        ):
+            raise ValueError("telegram_user_id must be a positive integer")
 
         if self._client is not None:
-            return await self._ask_with_client(
-                self._client,
-                normalized_question,
-                normalized_session_id,
-            )
+            return await self._ask_with_client(self._client, normalized_question, telegram_user_id)
 
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            return await self._ask_with_client(client, normalized_question, normalized_session_id)
+            return await self._ask_with_client(client, normalized_question, telegram_user_id)
 
     async def _ask_with_client(
         self,
         client: httpx.AsyncClient,
         question: str,
-        session_id: str | None,
+        telegram_user_id: int,
     ) -> AskResult:
-        payload: dict[str, str] = {"question": question}
-        if session_id is not None:
-            payload["session_id"] = session_id
+        payload: dict[str, str | int] = {
+            "question": question,
+            "telegram_user_id": telegram_user_id,
+        }
         try:
             response = await client.post(
                 self.api_url,
@@ -120,25 +122,31 @@ class AskAPIClient:
                 "Timed out after %.1f seconds while calling %s",
                 self.timeout_seconds,
                 self.api_url,
-                extra=log_extra(endpoint="/ask", stage="network", error_type="TimeoutException"),
+                extra=log_extra(
+                    endpoint="/telegram/ask", stage="network", error_type="TimeoutException"
+                ),
             )
-            raise AskAPITimeoutError("Timed out while calling /ask") from exc
+            raise AskAPITimeoutError("Timed out while calling /telegram/ask") from exc
         except httpx.RequestError as exc:
             logger.error(
                 "API %s is unavailable: %s",
                 self.api_url,
                 exc,
-                extra=log_extra(endpoint="/ask", stage="network", error_type=type(exc).__name__),
+                extra=log_extra(
+                    endpoint="/telegram/ask",
+                    stage="network",
+                    error_type=type(exc).__name__,
+                ),
             )
             raise AskAPIUnavailableError("API is unavailable") from exc
 
         if response.status_code == 401:
             logger.error(
-                "API %s rejected the configured API key",
+                "API %s rejected the configured Telegram service key",
                 self.api_url,
-                extra=log_extra(endpoint="/ask", stage="auth", error_type="unauthorized"),
+                extra=log_extra(endpoint="/telegram/ask", stage="auth", error_type="unauthorized"),
             )
-            raise AskAPIUnauthorizedError("API rejected the configured API key")
+            raise AskAPIUnauthorizedError("API rejected the configured Telegram service key")
         if response.status_code >= 500:
             error_message, error_code = self._extract_error_details(response)
             logger.error(
@@ -147,7 +155,7 @@ class AskAPIClient:
                 response.status_code,
                 response.text,
                 extra=log_extra(
-                    endpoint="/ask",
+                    endpoint="/telegram/ask",
                     stage="response",
                     error_type=f"http_{response.status_code}",
                 ),
@@ -165,7 +173,7 @@ class AskAPIClient:
                 response.status_code,
                 response.text,
                 extra=log_extra(
-                    endpoint="/ask",
+                    endpoint="/telegram/ask",
                     stage="response",
                     error_type=f"http_{response.status_code}",
                 ),
@@ -178,7 +186,9 @@ class AskAPIClient:
             logger.exception(
                 "API %s returned invalid JSON",
                 self.api_url,
-                extra=log_extra(endpoint="/ask", stage="response", error_type="invalid_json"),
+                extra=log_extra(
+                    endpoint="/telegram/ask", stage="response", error_type="invalid_json"
+                ),
             )
             raise AskAPIResponseError("API returned invalid JSON") from exc
 
@@ -188,7 +198,9 @@ class AskAPIClient:
                 "API %s returned payload without answer: %s",
                 self.api_url,
                 payload,
-                extra=log_extra(endpoint="/ask", stage="response", error_type="invalid_payload"),
+                extra=log_extra(
+                    endpoint="/telegram/ask", stage="response", error_type="invalid_payload"
+                ),
             )
             raise AskAPIResponseError("API payload does not contain answer text")
 
@@ -198,7 +210,9 @@ class AskAPIClient:
                 "API %s returned invalid sources payload: %s",
                 self.api_url,
                 payload,
-                extra=log_extra(endpoint="/ask", stage="response", error_type="invalid_payload"),
+                extra=log_extra(
+                    endpoint="/telegram/ask", stage="response", error_type="invalid_payload"
+                ),
             )
             raise AskAPIResponseError("API payload contains invalid sources")
 
@@ -209,7 +223,11 @@ class AskAPIClient:
                     "Skipping malformed source item from %s: %s",
                     self.api_url,
                     source,
-                    extra=log_extra(endpoint="/ask", stage="response", error_type="invalid_source"),
+                    extra=log_extra(
+                        endpoint="/telegram/ask",
+                        stage="response",
+                        error_type="invalid_source",
+                    ),
                 )
                 continue
 
@@ -230,8 +248,8 @@ class AskAPIClient:
 
     def _build_headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["X-API-Key"] = self.api_key
+        if self.service_key:
+            headers["X-Telegram-Service-Key"] = self.service_key
         return headers
 
     @staticmethod

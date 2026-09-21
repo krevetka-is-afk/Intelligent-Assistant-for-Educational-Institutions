@@ -229,29 +229,24 @@ async def process_question(
     metadata: dict[str, Any] = {}
 
     try:
-        conversation_session_id = f"tg:{telegram_id}"
         logger.info(
-            "Calling /ask with session_id=%s question_len=%s content_type=%s",
-            conversation_session_id,
+            "Calling /telegram/ask telegram_user_id=%s question_len=%s content_type=%s",
+            telegram_id,
             len(normalized_question),
             content_type,
             extra=log_extra(
                 telegram_id=str(telegram_id),
-                endpoint="/ask",
+                endpoint="/telegram/ask",
                 stage="request",
             ),
         )
-        try:
-            result = await client.ask(normalized_question, session_id=conversation_session_id)
-        except TypeError:
-            # Backward compatibility for custom test doubles that still use ask(question).
-            result = await client.ask(normalized_question)
+        result = await client.ask(normalized_question, telegram_user_id=telegram_id)
         logger.info(
-            "Received /ask response for session_id=%s",
-            conversation_session_id,
+            "Received /telegram/ask response for telegram_user_id=%s",
+            telegram_id,
             extra=log_extra(
                 telegram_id=str(telegram_id),
-                endpoint="/ask",
+                endpoint="/telegram/ask",
                 stage="response",
             ),
         )
