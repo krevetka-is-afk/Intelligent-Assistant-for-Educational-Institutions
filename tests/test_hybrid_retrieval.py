@@ -20,15 +20,21 @@ def _doc(
     chunk_id: str,
     document_id: str,
     chunk_index: int,
+    quality_status: str = "clean",
+    quality_reasons: str = "",
 ) -> Document:
+    metadata = {
+        "chunk_id": chunk_id,
+        "document_id": document_id,
+        "source": f"{document_id}.txt",
+        "chunk_index": chunk_index,
+    }
+    if quality_status != "clean" or quality_reasons:
+        metadata["quality_status"] = quality_status
+        metadata["quality_reasons"] = quality_reasons
     return Document(
         page_content=text,
-        metadata={
-            "chunk_id": chunk_id,
-            "document_id": document_id,
-            "source": f"{document_id}.txt",
-            "chunk_index": chunk_index,
-        },
+        metadata=metadata,
     )
 
 
@@ -39,6 +45,8 @@ def _retrieved(
     document_id: str,
     chunk_index: int,
     distance: float,
+    quality_status: str = "clean",
+    quality_reasons: str = "",
 ) -> RetrievedDocument:
     return RetrievedDocument(
         document=_doc(
@@ -46,6 +54,8 @@ def _retrieved(
             chunk_id=chunk_id,
             document_id=document_id,
             chunk_index=chunk_index,
+            quality_status=quality_status,
+            quality_reasons=quality_reasons,
         ),
         distance=distance,
     )
@@ -162,3 +172,119 @@ def test_hybrid_retrieval_bounds_lexical_only_candidate_distances(monkeypatch):
     assert retrieved[0].distance == 0.0
     assert retrieved[1].distance > retrieved[0].distance
     assert diagnostics["selected"][0]["channel_scores"]["lexical_score"] == 7.0
+
+
+def test_hybrid_retrieval_penalty_lets_close_clean_candidate_beat_noisy_candidate(
+    monkeypatch,
+):
+    dense_documents = [
+        _retrieved(
+            "1 2 3 4 5 назад далее",
+            chunk_id="noisy:0",
+            document_id="noisy",
+            chunk_index=0,
+            distance=0.05,
+            quality_status="review",
+            quality_reasons="high_digit_ratio,navigation_lines",
+        ),
+        _retrieved(
+            "Правила пересдачи",
+            chunk_id="clean:0",
+            document_id="clean",
+            chunk_index=0,
+            distance=0.06,
+        ),
+    ]
+
+    monkeypatch.setattr(rag, "similarity_search", lambda question, k: dense_documents)
+    monkeypatch.setattr(rag, "search_lexical", lambda query, *, limit, index_path=None: [])
+    monkeypatch.setattr(rag.config, "RAG_CANDIDATE_POOL_SIZE", 2, raising=False)
+    monkeypatch.setattr(rag.config, "RAG_MAX_CHUNKS_PER_DOCUMENT", 1, raising=False)
+
+    retrieved, _metadata, diagnostics = rag.retrieve_documents("пересдача", k=2)
+
+    assert [item.document.metadata["document_id"] for item in retrieved] == ["clean", "noisy"]
+    assert retrieved[1]._retrieval_diagnostics["quality_demoted"] is True
+    assert diagnostics["selected"][1]["quality_demoted"] is True
+
+
+def test_hybrid_retrieval_strong_noisy_dual_channel_match_beats_weak_clean_match(
+    monkeypatch,
+):
+    dense_documents = [
+        _retrieved(
+            "Полный фрагмент про пересдачи из студенческого справочника",
+            chunk_id="noisy:0",
+            document_id="noisy",
+            chunk_index=0,
+            distance=0.02,
+            quality_status="review",
+            quality_reasons="many_hyperlinks,navigation_lines",
+        ),
+        _retrieved(
+            "Общий учебный регламент без ответа на вопрос",
+            chunk_id="clean:0",
+            document_id="clean",
+            chunk_index=0,
+            distance=0.75,
+        ),
+    ]
+    lexical_documents = [
+        _LexicalResult(
+            document=_doc(
+                "Полный фрагмент про пересдачи из студенческого справочника",
+                chunk_id="noisy:0",
+                document_id="noisy",
+                chunk_index=0,
+                quality_status="review",
+                quality_reasons="many_hyperlinks,navigation_lines",
+            ),
+            score=0.99,
+        )
+    ]
+
+    monkeypatch.setattr(rag, "similarity_search", lambda question, k: dense_documents)
+    monkeypatch.setattr(
+        rag,
+        "search_lexical",
+        lambda query, *, limit, index_path=None: lexical_documents,
+    )
+    monkeypatch.setattr(rag.config, "RAG_CANDIDATE_POOL_SIZE", 2, raising=False)
+    monkeypatch.setattr(rag.config, "RAG_MAX_CHUNKS_PER_DOCUMENT", 1, raising=False)
+
+    retrieved, metadata, diagnostics = rag.retrieve_documents("когда пересдача", k=2)
+
+    assert [item.document.metadata["document_id"] for item in retrieved] == ["noisy", "clean"]
+    assert metadata["retrieval_strategy"] == "hybrid"
+    assert retrieved[0]._retrieval_diagnostics["quality_demoted"] is True
+    assert retrieved[0]._retrieval_diagnostics["channels"] == ["dense", "lexical"]
+    assert diagnostics["selected"][0]["channel_ranks"] == {"dense": 1, "lexical": 1}
+
+
+def test_hybrid_retrieval_keeps_noisy_document_as_fallback_when_no_clean_candidate(
+    monkeypatch,
+):
+    dense_documents = [
+        RetrievedDocument(
+            document=_doc(
+                "1 2 3 4 5 назад далее",
+                chunk_id="noisy:0",
+                document_id="noisy",
+                chunk_index=0,
+                quality_status="review",
+                quality_reasons="high_digit_ratio,navigation_lines",
+            ),
+            distance=0.05,
+        )
+    ]
+
+    monkeypatch.setattr(rag, "similarity_search", lambda question, k: dense_documents)
+    monkeypatch.setattr(rag, "search_lexical", lambda query, *, limit, index_path=None: [])
+    monkeypatch.setattr(rag.config, "RAG_CANDIDATE_POOL_SIZE", 1, raising=False)
+
+    retrieved, metadata, diagnostics = rag.retrieve_documents("пересдача", k=1)
+
+    assert [item.document.metadata["document_id"] for item in retrieved] == ["noisy"]
+    assert metadata["retrieval_strategy"] == "dense_only"
+    assert retrieved[0]._retrieval_diagnostics["quality_demoted"] is True
+    assert diagnostics["selected"][0]["quality_demoted"] is True
