@@ -37,6 +37,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="SQLite FTS5 index path. Defaults to <persist-dir>/lexical_index.sqlite3.",
     )
+    parser.add_argument(
+        "--audit-only",
+        action="store_true",
+        help="Parse documents and build a JSON-friendly report without touching Chroma or FTS.",
+    )
+    parser.add_argument(
+        "--report-json",
+        type=Path,
+        default=None,
+        help="Write structured per-file ingestion results to this JSON path.",
+    )
+    parser.add_argument(
+        "--enable-ocr",
+        action="store_true",
+        help="Enable bounded OCR for PDF pages with no extractable text.",
+    )
     return parser
 
 
@@ -54,6 +70,9 @@ def main() -> int:
             lexical_index_path=(
                 args.lexical_index_path.resolve() if args.lexical_index_path is not None else None
             ),
+            audit_only=args.audit_only,
+            report_path=args.report_json.resolve() if args.report_json is not None else None,
+            enable_ocr=args.enable_ocr if args.enable_ocr else None,
         )
     except Exception as exc:
         logging.getLogger("server.indexing").exception(
@@ -66,13 +85,16 @@ def main() -> int:
     logging.getLogger("server.indexing").info(
         (
             "Indexing finished: files_seen=%s indexed_files=%s "
-            "skipped_files=%s failed_files=%s chunks_written=%s"
+            "skipped_files=%s failed_files=%s chunks_written=%s "
+            "counts_by_reason=%s no_extractable_text_rate=%s"
         ),
         summary.files_seen,
         summary.indexed_files,
         summary.skipped_files,
         summary.failed_files,
         summary.chunks_written,
+        summary.counts_by_reason or {},
+        summary.no_extractable_text_rate,
         extra=log_extra(stage="indexing"),
     )
     return 0
