@@ -13,6 +13,7 @@ from src.server.app.document_ingestion import (
     load_document,
     normalize_text,
 )
+from src.server.app.lexical import get_indexed_document_ids, search_lexical
 
 
 class _FakeEmbeddings:
@@ -194,3 +195,110 @@ def test_index_directory_deletes_stale_documents_without_rebuild(tmp_path, monke
     }
 
     assert len(remaining_document_ids) == 1
+
+
+def test_index_directory_writes_and_cleans_lexical_index(tmp_path, monkeypatch):
+    input_dir = tmp_path / "docs"
+    persist_dir = tmp_path / "db"
+    lexical_index_path = tmp_path / "custom" / "lexical.sqlite3"
+    input_dir.mkdir()
+    (input_dir / "retake.txt").write_text("Правила первой пересдачи", encoding="utf-8")
+    stale_path = input_dir / "discipline.txt"
+    stale_path.write_text("Дисциплинарное взыскание", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "src.server.app.document_ingestion.get_embedding_function", lambda: _FakeEmbeddings()
+    )
+
+    index_directory(
+        input_dir,
+        persist_dir,
+        collection_name="test_docs",
+        rebuild=True,
+        lexical_index_path=lexical_index_path,
+    )
+    assert len(get_indexed_document_ids(lexical_index_path)) == 2
+    assert search_lexical("пересдача", limit=5, index_path=lexical_index_path)
+
+    stale_path.unlink()
+    index_directory(
+        input_dir,
+        persist_dir,
+        collection_name="test_docs",
+        rebuild=False,
+        lexical_index_path=lexical_index_path,
+    )
+
+    assert len(get_indexed_document_ids(lexical_index_path)) == 1
+    assert search_lexical("взыскание", limit=5, index_path=lexical_index_path) == []
+
+
+def test_index_directory_parse_failure_preserves_previous_lexical_rows(tmp_path, monkeypatch):
+    input_dir = tmp_path / "docs"
+    persist_dir = tmp_path / "db"
+    lexical_index_path = tmp_path / "lexical.sqlite3"
+    input_dir.mkdir()
+    source_path = input_dir / "retake.txt"
+    source_path.write_text("Старый текст про пересдачу", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "src.server.app.document_ingestion.get_embedding_function", lambda: _FakeEmbeddings()
+    )
+
+    index_directory(
+        input_dir,
+        persist_dir,
+        collection_name="test_docs",
+        rebuild=True,
+        lexical_index_path=lexical_index_path,
+    )
+    source_path.write_text("", encoding="utf-8")
+
+    summary = index_directory(
+        input_dir,
+        persist_dir,
+        collection_name="test_docs",
+        rebuild=False,
+        lexical_index_path=lexical_index_path,
+    )
+
+    assert summary.failed_files == 1
+    assert search_lexical("пересдача", limit=5, index_path=lexical_index_path)
+
+
+def test_index_directory_rolls_back_dense_rows_when_lexical_write_fails(tmp_path, monkeypatch):
+    input_dir = tmp_path / "docs"
+    persist_dir = tmp_path / "db"
+    lexical_index_path = tmp_path / "lexical.sqlite3"
+    input_dir.mkdir()
+    (input_dir / "retake.txt").write_text("Правила пересдачи" * 20, encoding="utf-8")
+
+    monkeypatch.setattr(
+        "src.server.app.document_ingestion.get_embedding_function", lambda: _FakeEmbeddings()
+    )
+
+    def fail_replace_document_chunks(*args, **kwargs):
+        raise RuntimeError("lexical write failed")
+
+    monkeypatch.setattr(
+        "src.server.app.document_ingestion.lexical.replace_document_chunks",
+        fail_replace_document_chunks,
+    )
+
+    summary = index_directory(
+        input_dir,
+        persist_dir,
+        collection_name="test_docs",
+        rebuild=True,
+        lexical_index_path=lexical_index_path,
+    )
+    store = Chroma(
+        collection_name="test_docs",
+        persist_directory=str(persist_dir),
+        embedding_function=_FakeEmbeddings(),
+    )
+
+    assert summary.failed_files == 1
+    assert summary.indexed_files == 0
+    assert store._collection.count() == 0
+    assert get_indexed_document_ids(lexical_index_path) == set()
