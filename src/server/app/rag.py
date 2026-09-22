@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
@@ -27,10 +28,14 @@ from .prompt_policy import (
 )
 from .vector import RetrievedDocument, similarity_search
 
+_search_lexical: Callable[..., Any] | None
 try:
-    from .lexical import search_lexical
+    from .lexical import search_lexical as _imported_search_lexical
 except ImportError:  # pragma: no cover - lexical lane may be absent during partial builds
-    search_lexical = None
+    _search_lexical = None
+else:
+    _search_lexical = _imported_search_lexical
+search_lexical = _search_lexical
 
 _ALLOWED_METADATA_KEYS = {
     "source",
@@ -47,6 +52,10 @@ _ALLOWED_METADATA_KEYS = {
     "source_type",
     "source_size",
     "source_sha256",
+    "quality_status",
+    "quality_score",
+    "quality_reasons",
+    "quality_flags",
 }
 
 _llm_chain = None
@@ -231,10 +240,26 @@ def _document_key(retrieved: RetrievedDocument) -> tuple[Any, ...]:
 
 def _chunk_index(retrieved: RetrievedDocument) -> int | None:
     value = (retrieved.document.metadata or {}).get("chunk_index")
+    if value is None:
+        return None
     try:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+QUALITY_REVIEW_RRF_MULTIPLIER = 0.75
+
+
+def _quality_demoted(retrieved: RetrievedDocument) -> bool:
+    metadata = retrieved.document.metadata or {}
+    flags = metadata.get("quality_flags")
+    has_flags = bool(flags)
+    return metadata.get("quality_status") == "review" or has_flags
+
+
+def _quality_score_multiplier(retrieved: RetrievedDocument) -> float:
+    return QUALITY_REVIEW_RRF_MULTIPLIER if _quality_demoted(retrieved) else 1.0
 
 
 def _lexical_result_to_retrieved(result: Any) -> RetrievedDocument | None:
@@ -252,10 +277,13 @@ def _lexical_result_to_retrieved(result: Any) -> RetrievedDocument | None:
         return None
     if not hasattr(document, "page_content") or not hasattr(document, "metadata"):
         return None
-    try:
-        lexical_score = float(score)
-    except (TypeError, ValueError):
+    if score is None:
         lexical_score = 0.0
+    else:
+        try:
+            lexical_score = float(score)
+        except (TypeError, ValueError):
+            lexical_score = 0.0
     return RetrievedDocument(
         document=document,
         distance=_bounded_distance(1.0 - lexical_score, fallback=1.0),
@@ -342,9 +370,18 @@ def _rank_hybrid_documents(
     for rank, retrieved in enumerate(lexical_documents, start=1):
         add_candidate("lexical", rank, retrieved)
 
+    for candidate in candidates.values():
+        quality_multiplier = _quality_score_multiplier(candidate["retrieved"])
+        candidate["quality_multiplier"] = quality_multiplier
+        candidate["ranking_score"] = float(candidate["rrf_score"]) * quality_multiplier
+
     ordered_candidates = sorted(
         candidates.values(),
-        key=lambda item: (-item["rrf_score"], item["best_rank"], repr(item["key"])),
+        key=lambda item: (
+            -item["ranking_score"],
+            item["best_rank"],
+            repr(item["key"]),
+        ),
     )
 
     selected: list[dict[str, Any]] = []
@@ -391,24 +428,34 @@ def _rank_hybrid_documents(
 
     selected_documents: list[RetrievedDocument] = []
     selected_diagnostics: list[dict[str, Any]] = []
-    max_rrf_score = max((float(candidate["rrf_score"]) for candidate in selected), default=0.0)
+    max_ranking_score = max(
+        (float(candidate["ranking_score"]) for candidate in selected),
+        default=0.0,
+    )
     for rank, candidate in enumerate(selected, start=1):
         retrieved = candidate["retrieved"]
         if "dense" in candidate["channel_ranks"]:
             retrieved.distance = _bounded_distance(retrieved.distance, fallback=1.0)
         else:
             normalized_fusion_score = (
-                float(candidate["rrf_score"]) / max_rrf_score if max_rrf_score > 0 else 0.0
+                float(candidate["ranking_score"]) / max_ranking_score
+                if max_ranking_score > 0
+                else 0.0
             )
             retrieved.distance = _bounded_distance(1.0 - normalized_fusion_score, fallback=1.0)
+        quality_demoted = _quality_demoted(retrieved)
         diagnostics = {
             "rank": rank,
             "chunk_id": (retrieved.document.metadata or {}).get("chunk_id"),
             "document_id": (retrieved.document.metadata or {}).get("document_id"),
+            "quality_flags": (retrieved.document.metadata or {}).get("quality_flags") or [],
+            "quality_demoted": quality_demoted,
+            "quality_score_multiplier": candidate["quality_multiplier"],
             "channels": sorted(candidate["channel_ranks"]),
             "channel_ranks": dict(candidate["channel_ranks"]),
             "channel_scores": dict(candidate["channel_scores"]),
             "rrf_score": round(float(candidate["rrf_score"]), 8),
+            "ranking_score": round(float(candidate["ranking_score"]), 8),
         }
         retrieved._retrieval_diagnostics = diagnostics
         selected_documents.append(retrieved)
