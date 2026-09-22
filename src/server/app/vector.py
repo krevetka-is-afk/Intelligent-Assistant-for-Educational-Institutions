@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
@@ -23,6 +24,7 @@ class EmptyVectorStoreError(VectorStoreUnavailableError):
 class RetrievedDocument:
     document: Document
     distance: float
+    _retrieval_diagnostics: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 _embedding_function: HuggingFaceEmbeddings | None = None
