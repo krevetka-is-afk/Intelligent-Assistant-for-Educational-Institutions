@@ -623,40 +623,52 @@ def test_ask_question_replaces_fabricated_explicit_source_references(monkeypatch
     assert len(llm_calls) == 2
 
 
-def test_ask_question_uses_conversation_history_in_retrieval_query(monkeypatch):
+def test_ask_question_uses_current_question_for_retrieval_and_history_for_llm(monkeypatch):
     docs = [
         RetrievedDocument(
             document=Document(page_content="x", metadata={"source": "s"}),
             distance=0.1,
         )
     ]
-    observed: dict[str, str] = {}
+    observed: dict[str, object] = {}
+    conversation_history = [
+        "Я на 2 курсе",
+        "У меня пересдача",
+        "Какие документы нужны?",
+        "И куда нести?",
+    ]
 
     def _similarity_search(question: str, k: int):
         observed["query"] = question
-        observed["k"] = str(k)
+        observed["k"] = k
         return docs
 
+    def _invoke_llm(
+        question: str,
+        retrieved_documents: list[RetrievedDocument],
+        history: list[str] | None,
+    ) -> str:
+        observed["llm_question"] = question
+        observed["llm_documents"] = retrieved_documents
+        observed["llm_history"] = history
+        return "ok"
+
     monkeypatch.setattr(rag, "similarity_search", _similarity_search)
-    monkeypatch.setattr(rag, "invoke_llm", lambda question, retrieved_documents, _: "ok")
+    monkeypatch.setattr(rag, "invoke_llm", _invoke_llm)
 
     result = asyncio.run(
         rag.ask_question(
             "А что по дедлайну?",
-            conversation_history=[
-                "Я на 2 курсе",
-                "У меня пересдача",
-                "Какие документы нужны?",
-                "И куда нести?",
-            ],
+            conversation_history=conversation_history,
         )
     )
 
     assert result.answer == "ok"
-    assert observed["k"] == str(rag.config.RAG_TOP_K)
-    assert observed["query"] == (
-        "У меня пересдача\nКакие документы нужны?\nИ куда нести?\nА что по дедлайну?"
-    )
+    assert observed["k"] == rag.config.RAG_TOP_K
+    assert observed["query"] == "А что по дедлайну?"
+    assert observed["llm_question"] == "А что по дедлайну?"
+    assert observed["llm_documents"] == docs
+    assert observed["llm_history"] == conversation_history
 
 
 def test_rag_evaluation_cases_cover_required_question_matrix():
@@ -741,12 +753,7 @@ def test_capture_rag_evaluation_case_records_retrieval_baseline_without_llm():
     capture = capture_rag_evaluation_case(case, search_fn=_search, top_n=5)
 
     assert observed == {
-        "query": (
-            "За какие действия можно получить дисциплинарное взыскание?\n"
-            "Какие бывают взыскания?\n"
-            "Расскажи про правила внутреннего распорядка.\n"
-            "Когда периоды пересдач в ВШЭ?"
-        ),
+        "query": "Когда периоды пересдач в ВШЭ?",
         "top_n": 5,
     }
     assert capture.case_id == case.id
