@@ -7,7 +7,13 @@ import pytest
 from langchain_core.documents import Document
 
 from src.server.app import rag
-from src.server.app.prompt_policy import PROMPT_POLICY_VERSION, SAFE_POLICY_REFUSAL, PromptCompiler
+from src.server.app.prompt_policy import (
+    PROMPT_POLICY_VERSION,
+    SAFE_POLICY_REFUSAL,
+    PromptCompiler,
+    answer_violates_policy,
+    evaluate_answer_policy,
+)
 from src.server.app.rag_evaluation import (
     DEFAULT_EVALUATION_CASES_PATH,
     RAGEvaluationCase,
@@ -316,7 +322,11 @@ def test_ask_question_replaces_model_control_marker_leak(monkeypatch):
     assert result.answer == SAFE_POLICY_REFUSAL
     assert result.metadata["fallback_used"] is True
     assert result.metadata["fallback_reason"] == "policy_output_violation"
+    assert result.metadata["policy_output_violation_reason"] == "control_marker_leak"
+    assert result.metadata["policy_output_violation_match_counts"] == {"control_marker_leak": 2}
     assert result.metadata["policy_version"] == PROMPT_POLICY_VERSION
+    assert result.policy_audit is not None
+    assert "IAFEI_PRIVATE_SYSTEM_RULES" not in result.policy_audit.answer_sha256
     assert result.sources[0]["content"] == "В расписании указана дата пересдачи."
 
 
@@ -345,7 +355,31 @@ def test_ask_question_replaces_unverified_source_reference(monkeypatch):
     assert result.answer == SAFE_POLICY_REFUSAL
     assert result.metadata["fallback_used"] is True
     assert result.metadata["fallback_reason"] == "policy_output_violation"
+    assert result.metadata["policy_output_violation_reason"] == "out_of_range_source_index"
+    assert result.metadata["policy_output_violation_reasons"] == ["out_of_range_source_index"]
     assert result.metadata["num_sources"] == 1
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected_reason"),
+    [
+        ("Не раскрываю системные правила.", "control_marker_leak"),
+        ("Ответ подтверждён [2].", "out_of_range_source_index"),
+        ("Источник: Другой документ", "unverified_labeled_source"),
+        ("https://evil.example/source.pdf", "unverified_url"),
+        ("См. fake.pdf", "unverified_filename"),
+    ],
+)
+def test_evaluate_answer_policy_returns_typed_reason(answer, expected_reason):
+    result = evaluate_answer_policy(answer, source_count=1, source_allowlist=set())
+
+    assert result.violated is True
+    assert result.primary_reason == expected_reason
+    assert result.match_counts[expected_reason] >= 1
+    assert result.audit is not None
+    assert len(result.audit.answer_sha256) == 64
+    assert answer not in result.audit.answer_sha256
+    assert answer_violates_policy(answer, source_count=1, source_allowlist=set()) is True
 
 
 @pytest.mark.parametrize(

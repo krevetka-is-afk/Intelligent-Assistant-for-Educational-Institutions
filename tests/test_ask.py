@@ -39,7 +39,9 @@ def _rag_response(*, fallback_used: bool = False) -> RAGResponse:
     )
 
 
-def _policy_refused_response(reason: str = "policy_forbidden_control_or_secret_request"):
+def _policy_refused_response(
+    reason: str = "policy_forbidden_control_or_secret_request", **metadata_overrides: object
+):
     return RAGResponse(
         answer="Policy refusal",
         sources=[],
@@ -47,6 +49,7 @@ def _policy_refused_response(reason: str = "policy_forbidden_control_or_secret_r
             fallback_used=True,
             fallback_reason=reason,
             policy_version="rag-prompt-policy-v1",
+            **metadata_overrides,
         ),
         retrieved_documents=[],
     )
@@ -66,6 +69,15 @@ def reset_conversation_memory_store():
         ("web:1", _rag_response(fallback_used=True), True),
         ("web:1", _policy_refused_response(), False),
         ("web:1", _policy_refused_response("policy_output_violation"), False),
+        (
+            "web:1",
+            _policy_refused_response(
+                "policy_output_violation",
+                policy_output_violation_reason="unverified_url",
+                policy_output_violation_match_counts={"unverified_url": 1},
+            ),
+            False,
+        ),
         (None, _rag_response(), False),
         (None, _rag_response(fallback_used=True), False),
         ("web:1", None, False),
@@ -75,6 +87,7 @@ def reset_conversation_memory_store():
         "owned-fallback-success",
         "owned-policy-precheck-refusal",
         "owned-policy-output-refusal",
+        "owned-typed-policy-output-refusal",
         "unowned-success",
         "unowned-fallback-success",
         "owned-failure",
