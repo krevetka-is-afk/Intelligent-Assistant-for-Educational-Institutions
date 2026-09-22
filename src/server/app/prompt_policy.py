@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import PurePosixPath
 from typing import Any, Literal
 
@@ -88,6 +89,66 @@ _PAGE_SUFFIX_PATTERN = re.compile(
 class PromptRejection:
     reason: str
     policy_version: str = PROMPT_POLICY_VERSION
+
+
+AnswerPolicyReason = Literal[
+    "control_marker_leak",
+    "out_of_range_source_index",
+    "unverified_labeled_source",
+    "unverified_url",
+    "unverified_filename",
+]
+ANSWER_POLICY_REASONS: frozenset[AnswerPolicyReason] = frozenset(
+    {
+        "control_marker_leak",
+        "out_of_range_source_index",
+        "unverified_labeled_source",
+        "unverified_url",
+        "unverified_filename",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerPolicyMatch:
+    """A redacted output-policy match; never retains generated text."""
+
+    reason: AnswerPolicyReason
+    pattern_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerPolicyAudit:
+    """Audit-only evidence safe to send to the dedicated audit logger."""
+
+    answer_sha256: str
+    pattern_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerPolicyResult:
+    matches: tuple[AnswerPolicyMatch, ...]
+    audit: AnswerPolicyAudit | None = None
+    policy_version: str = PROMPT_POLICY_VERSION
+
+    @property
+    def violated(self) -> bool:
+        return bool(self.matches)
+
+    @property
+    def primary_reason(self) -> AnswerPolicyReason | None:
+        return self.matches[0].reason if self.matches else None
+
+    @property
+    def reasons(self) -> tuple[AnswerPolicyReason, ...]:
+        return tuple(dict.fromkeys(match.reason for match in self.matches))
+
+    @property
+    def match_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for match in self.matches:
+            counts[match.reason] = counts.get(match.reason, 0) + 1
+        return counts
 
 
 class PromptPolicyViolation(RuntimeError):
@@ -288,33 +349,69 @@ def _source_reference_allowed(value: str, allowlist: set[str]) -> bool:
     return normalized in allowlist
 
 
+def evaluate_answer_policy(
+    answer: str,
+    *,
+    source_count: int | None = None,
+    source_allowlist: set[str] | None = None,
+) -> AnswerPolicyResult:
+    compact = _compact_text(answer)
+    matches: list[AnswerPolicyMatch] = []
+
+    for pattern_index, pattern in enumerate(_CONTROL_LEAK_PATTERNS, start=1):
+        matches.extend(
+            AnswerPolicyMatch("control_marker_leak", f"control_leak_{pattern_index}")
+            for _ in pattern.finditer(compact)
+        )
+
+    if source_count is not None:
+        for match in _SOURCE_REFERENCE_PATTERN.finditer(compact):
+            source_index = next(value for value in match.groupdict().values() if value is not None)
+            if int(source_index) < 1 or int(source_index) > source_count:
+                matches.append(
+                    AnswerPolicyMatch("out_of_range_source_index", "source_reference_index")
+                )
+
+        allowlist = source_allowlist or set()
+        for match in _LABELED_SOURCE_PATTERN.finditer(answer):
+            if not _source_reference_allowed(match.group("value"), allowlist):
+                matches.append(AnswerPolicyMatch("unverified_labeled_source", "labeled_source"))
+
+        url_spans: list[tuple[int, int]] = []
+        for match in _URL_PATTERN.finditer(answer):
+            url_spans.append(match.span())
+            if not _source_reference_allowed(match.group(0), allowlist):
+                matches.append(AnswerPolicyMatch("unverified_url", "url"))
+
+        for match in _FILENAME_PATTERN.finditer(answer):
+            if any(start <= match.start() and match.end() <= end for start, end in url_spans):
+                continue
+            if not _source_reference_allowed(match.group(0), allowlist):
+                matches.append(AnswerPolicyMatch("unverified_filename", "filename"))
+
+    frozen_matches = tuple(matches)
+    return AnswerPolicyResult(
+        matches=frozen_matches,
+        audit=(
+            AnswerPolicyAudit(
+                answer_sha256=sha256(answer.encode("utf-8")).hexdigest(),
+                pattern_ids=tuple(match.pattern_id for match in frozen_matches),
+            )
+            if frozen_matches
+            else None
+        ),
+    )
+
+
 def answer_violates_policy(
     answer: str,
     *,
     source_count: int | None = None,
     source_allowlist: set[str] | None = None,
 ) -> bool:
-    compact = _compact_text(answer)
-    if any(pattern.search(compact) for pattern in _CONTROL_LEAK_PATTERNS):
-        return True
-    if source_count is None:
-        return False
-    for match in _SOURCE_REFERENCE_PATTERN.finditer(compact):
-        source_index = next(value for value in match.groupdict().values() if value is not None)
-        if int(source_index) < 1 or int(source_index) > source_count:
-            return True
-    allowlist = source_allowlist or set()
-    for match in _LABELED_SOURCE_PATTERN.finditer(answer):
-        if not _source_reference_allowed(match.group("value"), allowlist):
-            return True
-    url_spans: list[tuple[int, int]] = []
-    for match in _URL_PATTERN.finditer(answer):
-        url_spans.append(match.span())
-        if not _source_reference_allowed(match.group(0), allowlist):
-            return True
-    for match in _FILENAME_PATTERN.finditer(answer):
-        if any(start <= match.start() and match.end() <= end for start, end in url_spans):
-            continue
-        if not _source_reference_allowed(match.group(0), allowlist):
-            return True
-    return False
+    """Compatibility wrapper for callers that only need a policy decision."""
+    return evaluate_answer_policy(
+        answer,
+        source_count=source_count,
+        source_allowlist=source_allowlist,
+    ).violated
