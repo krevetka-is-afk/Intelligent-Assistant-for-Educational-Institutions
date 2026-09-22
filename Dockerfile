@@ -56,6 +56,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-eng \
     tesseract-ocr-rus \
+    poppler-utils \
  && rm -rf /var/lib/apt/lists/*
 
 RUN addgroup --gid ${APP_GID} appgroup && \
