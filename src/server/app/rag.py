@@ -174,14 +174,8 @@ def build_conversation_history(conversation_history: list[str] | None) -> str:
 
 
 def build_retrieval_query(question: str, conversation_history: list[str] | None) -> str:
-    if not conversation_history:
-        return question
-
-    # Keep retrieval query compact: only the latest few user turns plus current question.
-    recent_messages = [message.strip() for message in conversation_history[-3:] if message.strip()]
-    if not recent_messages:
-        return question
-    return "\n".join([*recent_messages, question])
+    del conversation_history
+    return question.strip()
 
 
 def invoke_llm(
