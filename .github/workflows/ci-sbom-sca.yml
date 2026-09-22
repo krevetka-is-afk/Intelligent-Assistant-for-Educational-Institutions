@@ -1,19 +1,8 @@
 name: Security - SBOM & SCA
 
 on:
+  workflow_call:
   workflow_dispatch:
-  push:
-    paths:
-      - "**/*.py"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".github/workflows/ci-sbom-sca.yml"
-  pull_request:
-    paths:
-      - "**/*.py"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".github/workflows/ci-sbom-sca.yml"
 
 permissions:
   contents: read
@@ -36,17 +25,19 @@ jobs:
 
       - name: Generate SBOM (Syft CycloneDX)
         run: |
-          docker run --rm -v $PWD:/work -w /work anchore/syft:latest \
+          docker run --rm -v "$PWD:/work" -w /work anchore/syft:latest \
             packages dir:. -o cyclonedx-json > EVIDENCE/SBOM-SCA/sbom.json
 
       - name: SCA Scan (Grype)
         run: |
           set -e
-          docker run --rm -v $PWD:/work -w /work anchore/grype:latest \
+          docker run --rm -v "$PWD:/work" -w /work anchore/grype:latest \
             sbom:/work/EVIDENCE/SBOM-SCA/sbom.json -o json > EVIDENCE/SBOM-SCA/sca_report.json
           echo "# SCA summary" > EVIDENCE/SBOM-SCA/sca_summary.md
-          jq '[.matches[].vulnerability.severity] | group_by(.) | map({(.[0]): length}) | add' \
-            EVIDENCE/SBOM-SCA/sca_report.json >> EVIDENCE/SBOM-SCA/sca_summary.md || true
+          jq '[.matches[]?.vulnerability.severity] | group_by(.) | map({(.[0]): length}) | add // {}' \
+            EVIDENCE/SBOM-SCA/sca_report.json >> EVIDENCE/SBOM-SCA/sca_summary.md
+          jq -e '[.matches[]? | select(.vulnerability.severity | ascii_upcase | IN("CRITICAL", "HIGH"))] | length == 0' \
+            EVIDENCE/SBOM-SCA/sca_report.json > /dev/null
 
       - name: Upload SBOM/SCA evidence
         if: always()

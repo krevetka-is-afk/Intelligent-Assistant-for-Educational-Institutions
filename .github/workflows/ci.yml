@@ -1,8 +1,9 @@
 name: CI
+
 on:
   push:
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 permissions:
   contents: read
@@ -12,43 +13,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changes:
-    name: Detect changes
-    runs-on: ubuntu-latest
-    outputs:
-      python: ${{ steps.filter.outputs.python }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
+  sast-secrets:
+    name: SAST and secret scanning
+    uses: ./.github/workflows/ci-sast-secrets.yml
 
-      - name: Filter paths
-        id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            python:
-              - '**/*.py'
-              - 'pyproject.toml'
-              - 'uv.lock'
-              - '.pre-commit-config.yaml'
+  sbom-sca:
+    name: SBOM and dependency scanning
+    uses: ./.github/workflows/ci-sbom-sca.yml
 
   lint-and-test:
-    name: Lint & Test (matrix)
-    needs: changes
-    if: needs.changes.outputs.python == 'true'
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    name: Lint & Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
-        python-version: [ "3.11", "3.12", "3.13" ]
+        # pyproject.toml declares requires-python = ">=3.12". Exercise the
+        # declared lower bound and the current supported minor release.
+        python-version: ["3.12", "3.13"]
     env:
       DATABASE_URL: "${{ secrets.DEV_DATABASE_URL || 'sqlite:///data/ci_test.sqlite' }}"
       TEST_DB_URL: "${{ secrets.DEV_TEST_DB_URL || 'sqlite:///data/ci_test.sqlite' }}"
-      # JWT_SECRET: "${{ secrets.DEV_JWT_SECRET || 'ci-dev-jwt-secret' }}"
       API_KEY: ${{ secrets.API_KEY }}
       APP_ENV: ${{ secrets.APP_ENV }}
       PYTHONPATH: .
@@ -67,76 +52,48 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "**/uv.lock"
 
-      - name: Install dependencies
-        run: |
-          uv sync --group dev --frozen
+      - name: Verify lockfile
+        run: uv lock --check
 
-      - name: Lint & Format
+      - name: Install dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Lint and format checks
         run: |
-          uv run ruff check --output-format=github .
+          uv run ruff check .
           uv run black --check .
           uv run isort --check-only .
 
       - name: Tests
-        run: |
-          mkdir -p reports
-          uv run pytest --maxfail=1 --disable-warnings --junitxml=reports/junit.xml
-
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: test-reports-${{ matrix.os }}-py${{ matrix.python-version }}
-          path: reports/**
-          if-no-files-found: warn
+        run: uv run -m pytest -q -rs -p no:cacheprovider
 
       - name: Pre-commit (all files)
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        if: matrix.python-version == '3.12'
         env:
-          # gitleaks already runs in the dedicated security-check job.
-          # Skipping it here avoids flaky Go module downloads during pre-commit env bootstrap.
+          # Gitleaks is a blocking dedicated security job below. Skipping it
+          # here avoids a second, network-dependent Go bootstrap.
           SKIP: no-commit-to-branch,gitleaks
         run: uv run pre-commit run --all-files
 
-  security-check:
-    name: Security quick scan
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Gitleaks scan (redacted)
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_CONFIG: security/.gitleaks.toml
-          GITLEAKS_ENABLE_COMMENTS: "false"
-          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
-
   package-and-artifacts:
-    name: Coverage report
+    name: Coverage, package, and container scan
     needs: lint-and-test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     env:
       DATABASE_URL: "${{ secrets.DEV_DATABASE_URL || 'sqlite:///data/ci_test.sqlite' }}"
       TEST_DB_URL: "${{ secrets.DEV_TEST_DB_URL || 'sqlite:///data/ci_test.sqlite' }}"
-      # JWT_SECRET: "${{ secrets.DEV_JWT_SECRET || 'ci-dev-jwt-secret' }}"
       API_KEY: ${{ secrets.API_KEY }}
       APP_ENV: ${{ secrets.APP_ENV }}
       PYTHONPATH: .
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Python
+      - name: Setup Python 3.12
         uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v7
@@ -144,18 +101,20 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "**/uv.lock"
 
+      - name: Verify lockfile
+        run: uv lock --check
+
       - name: Install dependencies
-        run: |
-          uv sync --group dev --frozen
+        run: uv sync --frozen --group dev
 
       - name: Tests with coverage
         run: |
           mkdir -p reports
-          uv run pytest --cov=app --cov=domain \
-            --cov-report=xml --cov-report=html --cov-report=term-missing \
-            --junitxml=reports/junit-coverage.xml
+          uv run -m pytest --cov=src --cov-report=term-missing --cov-report=xml --cov-report=html \
+            --cov-fail-under=74 -q --junitxml=reports/junit-coverage.xml
 
       - name: Upload coverage reports
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: coverage-reports
@@ -167,8 +126,7 @@ jobs:
 
       - name: Build package
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          uv run --with build python -m build
+        run: uv run --with build python -m build
 
       - name: Upload build package
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -176,14 +134,8 @@ jobs:
         with:
           name: python-package
           path: dist/
+          if-no-files-found: error
 
-      - name: Upload coverage HTML report
-        uses: actions/upload-artifact@v6
-        with:
-          name: coverage-html
-          path: htmlcov
-
-      # Dockerfile lint
       - name: Lint Dockerfile (hadolint)
         uses: hadolint/hadolint-action@v3.3.0
         with:
@@ -191,25 +143,65 @@ jobs:
           config: security/hadolint.yaml
 
       - name: Build image for scan
+        run: docker build -t intelligent-assistant:ci .
+
+      - name: Scan image for High and Critical vulnerabilities
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: intelligent-assistant:ci
+          trivy-config: security/trivy.yaml
+          format: json
+          output: trivy-report.json
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          vuln-type: os,library
+          exit-code: "1"
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: trivy-report
+          path: trivy-report.json
+          if-no-files-found: warn
+
+  compose-config:
+    name: Validate Compose configurations
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate development and production Compose files
+        shell: bash
         run: |
-          docker build -t registry:5000/krevetka:ci .
-
-      # - name: Trivy scan
-      #   uses: aquasecurity/trivy-action@0.34.0
-      #   with:
-      #     image-ref: registry:5000/krevetka:ci
-      #     format: 'json'
-      #     output: trivy-report.json
-
-      # - name: Upload trivy report
-      #   uses: actions/upload-artifact@v6
-      #   with:
-      #     name: trivy-report
-      #     path: trivy-report.json
+          compose_env="$(mktemp)"
+          trap 'rm -f "$compose_env"' EXIT
+          seccomp_profile_path="$GITHUB_WORKSPACE/security/seccomp/default.json"
+          test -r "$seccomp_profile_path"
+          cat > "$compose_env" <<'EOF'
+          POSTGRES_DB=ci_database
+          POSTGRES_USER=ci_user
+          POSTGRES_PASSWORD=ci_password
+          BOT_TOKEN=123456:ci-token
+          API_KEY=ci-api-key
+          TELEGRAM_SERVICE_KEY=ci-telegram-service-key
+          APP_ENV=ci
+          LOG_LEVEL=INFO
+          DOCKER_IMAGE_NAME=example.invalid/intelligent-assistant
+          DOCKER_IMAGE_TAG=ci
+          DOCUMENTS_HOST_PATH=./data_and_documents
+          SERVER_PUBLISH_PORT=8000
+          EOF
+          ENV_FILE="$compose_env" docker compose --env-file "$compose_env" config -q
+          ENV_FILE="$compose_env" SECCOMP_PROFILE_PATH="$seccomp_profile_path" \
+            docker compose --env-file "$compose_env" \
+            -f deployment/production/compose.yaml config -q
 
   deploy-staging:
     name: Deploy to Staging
-    needs: [lint-and-test, package-and-artifacts]
+    needs: [sast-secrets, sbom-sca, lint-and-test, package-and-artifacts, compose-config]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment:
@@ -238,5 +230,4 @@ jobs:
           echo "Mock deployment completed to $STAGING_URL"
 
       - name: Health check staging
-        run: |
-          echo "Performing health check..."
+        run: echo "Performing health check..."
