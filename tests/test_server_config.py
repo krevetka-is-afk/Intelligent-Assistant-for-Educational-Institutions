@@ -119,3 +119,23 @@ def test_rag_policy_limits_are_configurable(monkeypatch):
     assert config.RAG_MAX_HISTORY_MESSAGES == 3
     assert config.RAG_MAX_HISTORY_CHARS == 400
     assert config.RAG_SOURCE_SNIPPET_CHARS == 120
+
+
+@pytest.mark.parametrize("variable", ["API_KEY", "TELEGRAM_SERVICE_KEY"])
+def test_runtime_config_rejects_blank_required_secret(monkeypatch, variable):
+    monkeypatch.setenv("API_KEY", "test-api-key")
+    monkeypatch.setenv("TELEGRAM_SERVICE_KEY", "test-telegram-service-key")
+    monkeypatch.setenv(variable, "  ")
+
+    config = importlib.reload(importlib.import_module("src.server.app.config"))
+
+    with pytest.raises(RuntimeError, match=rf"{variable} is not set"):
+        config.validate_runtime_config()
+
+
+def test_blank_bootstrap_token_disables_bootstrap(monkeypatch):
+    monkeypatch.setenv("WEB_BOOTSTRAP_ADMIN_TOKEN", "  ")
+
+    config = importlib.reload(importlib.import_module("src.server.app.config"))
+
+    assert config.WEB_BOOTSTRAP_ADMIN_TOKEN is None
