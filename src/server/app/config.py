@@ -37,6 +37,14 @@ def _get_bool_env(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _get_nonempty_env(name: str) -> str | None:
+    value = getenv(name)
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
 def _resolve_vector_db_dir() -> Path:
     configured = getenv("VECTOR_DB_DIR")
     if configured is None:
@@ -117,9 +125,9 @@ def _resolve_web_auth_database_url() -> str:
 DEFAULT_VECTOR_DB_DIR = SERVER_DIR / "chrome_langchain_db"
 DEFAULT_DOCUMENTS_DIR = _resolve_default_documents_dir()
 
-API_KEY = getenv("API_KEY")
-TELEGRAM_SERVICE_KEY = getenv("TELEGRAM_SERVICE_KEY")
-WEB_BOOTSTRAP_ADMIN_TOKEN = getenv("WEB_BOOTSTRAP_ADMIN_TOKEN")
+API_KEY = _get_nonempty_env("API_KEY")
+TELEGRAM_SERVICE_KEY = _get_nonempty_env("TELEGRAM_SERVICE_KEY")
+WEB_BOOTSTRAP_ADMIN_TOKEN = _get_nonempty_env("WEB_BOOTSTRAP_ADMIN_TOKEN")
 WEB_AUTH_DATABASE_URL = _resolve_web_auth_database_url()
 APP_ENV = getenv("APP_ENV", "development") or "development"
 LOG_LEVEL = getenv("LOG_LEVEL", "INFO") or "INFO"

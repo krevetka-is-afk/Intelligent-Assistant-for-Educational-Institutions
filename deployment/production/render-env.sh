@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
 # Собирает .env.deploy из переменных CI/CD GitLab (Settings → CI/CD → Variables).
 # Обязательные: BOT_TOKEN, API_KEY, TELEGRAM_SERVICE_KEY, POSTGRES_USER,
-#               POSTGRES_PASSWORD, POSTGRES_DB, WEB_BOOTSTRAP_ADMIN_TOKEN
+#               POSTGRES_PASSWORD, POSTGRES_DB, WEB_BOOTSTRAP_ADMIN_TOKEN,
+#               SECCOMP_PROFILE_PATH (absolute readable path on the deployment host)
 # Остальные — см. значения по умолчанию ниже.
 
 set -eu
@@ -13,7 +14,7 @@ append() {
   printf '%s=%s\n' "$1" "$2" >> "$OUT"
 }
 
-for v in BOT_TOKEN API_KEY TELEGRAM_SERVICE_KEY POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB WEB_BOOTSTRAP_ADMIN_TOKEN; do
+for v in BOT_TOKEN API_KEY TELEGRAM_SERVICE_KEY POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB WEB_BOOTSTRAP_ADMIN_TOKEN SECCOMP_PROFILE_PATH; do
   eval "val=\${$v-}"
   if [ -z "$val" ]; then
     echo "render-env.sh: ERROR — задайте CI/CD variable: $v" >&2
@@ -43,6 +44,7 @@ append CHROMA_COLLECTION_NAME "${CHROMA_COLLECTION_NAME:-edu_documents}"
 append VECTOR_DB_DIR "${VECTOR_DB_DIR:-/data}"
 append DOCUMENTS_DIR "${DOCUMENTS_DIR:-/data_and_documents}"
 append DOCUMENTS_HOST_PATH "${DOCUMENTS_HOST_PATH:-./data_and_documents}"
+append SECCOMP_PROFILE_PATH "$SECCOMP_PROFILE_PATH"
 append RAG_TOP_K "${RAG_TOP_K:-4}"
 append RAG_MAX_CONTEXT_DOCUMENTS "${RAG_MAX_CONTEXT_DOCUMENTS:-4}"
 append RAG_MAX_DOCUMENT_CHARS "${RAG_MAX_DOCUMENT_CHARS:-1200}"
