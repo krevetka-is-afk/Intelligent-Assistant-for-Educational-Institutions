@@ -12,10 +12,12 @@ from .metrics import (
     rag_errors_total,
     rag_fallback_total,
     rag_generation_seconds,
+    rag_policy_output_violations_total,
     rag_retrieval_seconds,
     rag_total_seconds,
 )
 from .principal_context import PrincipalContext
+from .prompt_policy import ANSWER_POLICY_REASONS
 from .question_validation import normalize_question
 from .rag import RAGResponse
 from .vector import EmptyVectorStoreError, VectorStoreUnavailableError
@@ -29,6 +31,7 @@ POLICY_REJECTION_FALLBACK_REASONS = frozenset(
         "policy_output_violation",
     }
 )
+policy_audit_logger = logging.getLogger("server.rag.policy_audit")
 
 
 def _conversation_memory_key_for_success(
@@ -193,6 +196,42 @@ class AskService:
         rag_total_seconds.observe(metadata["total_time_ms"] / 1000)
         if metadata["fallback_used"]:
             rag_fallback_total.inc()
+
+        policy_reason = metadata.get("policy_output_violation_reason")
+        policy_match_counts = metadata.get("policy_output_violation_match_counts")
+        if (
+            isinstance(policy_reason, str)
+            and policy_reason in ANSWER_POLICY_REASONS
+            and isinstance(policy_match_counts, dict)
+        ):
+            metadata["policy_output_request_id"] = request_id
+            policy_match_count = sum(
+                count for count in policy_match_counts.values() if isinstance(count, int)
+            )
+            rag_policy_output_violations_total.labels(reason=policy_reason).inc()
+            self._logger.warning(
+                "Output policy violation reason=%s match_count=%s",
+                policy_reason,
+                policy_match_count,
+                extra=log_extra(
+                    request_id=request_id,
+                    endpoint=endpoint,
+                    stage="policy",
+                    error_type=policy_reason,
+                ),
+            )
+            if result.policy_audit is not None:
+                policy_audit_logger.info(
+                    "Output policy audit answer_sha256=%s pattern_ids=%s",
+                    result.policy_audit.answer_sha256,
+                    ",".join(result.policy_audit.pattern_ids),
+                    extra=log_extra(
+                        request_id=request_id,
+                        endpoint=endpoint,
+                        stage="policy_audit",
+                        error_type=policy_reason,
+                    ),
+                )
 
         self._logger.info(
             (
