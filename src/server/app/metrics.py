@@ -4,6 +4,11 @@ from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_
 
 rag_requests_total = Counter("rag_requests_total", "Total number of RAG requests")
 rag_fallback_total = Counter("rag_fallback_total", "Total number of RAG fallback responses")
+rag_policy_output_violations_total = Counter(
+    "rag_policy_output_violations_total",
+    "Total number of output-policy violations by fixed reason",
+    ["reason"],
+)
 rag_errors_total = Counter("rag_errors_total", "Total number of RAG errors", ["stage"])
 rag_retrieval_seconds = Histogram(
     "rag_retrieval_seconds",

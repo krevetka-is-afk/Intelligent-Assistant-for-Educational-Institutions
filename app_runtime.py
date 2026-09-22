@@ -90,6 +90,19 @@ def setup_logging(service_name: str, *, default_level: str = "INFO") -> None:
                     "stream": "ext://sys.stdout",
                     "filters": ["context"],
                     "formatter": "structured",
+                },
+                "policy_audit": {
+                    "class": "logging.StreamHandler",
+                    "stream": "ext://sys.stderr",
+                    "filters": ["context"],
+                    "formatter": "structured",
+                },
+            },
+            "loggers": {
+                "server.rag.policy_audit": {
+                    "handlers": ["policy_audit"],
+                    "level": level,
+                    "propagate": False,
                 }
             },
             "root": {
