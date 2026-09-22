@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 
 import pytest
@@ -171,6 +172,69 @@ def test_ask_returns_compatible_contract(client, monkeypatch):
             total_time_ms=45,
         ),
     }
+
+
+def test_ask_logs_private_retrieval_diagnostics_without_returning_them(client, monkeypatch, caplog):
+    async def _ask_with_private_diagnostics(
+        question: str,
+        conversation_history: list[str] | None = None,
+    ) -> RAGResponse:
+        del conversation_history
+        assert question == "Hello world"
+        return RAGResponse(
+            answer="Ответ найден.",
+            sources=[],
+            metadata=_rag_metadata(
+                retrieval_strategy="hybrid",
+                retrieval_candidate_pool_size=3,
+                retrieval_dense_candidate_count=2,
+                retrieval_lexical_candidate_count=1,
+                retrieval_lexical_available=True,
+            ),
+            retrieved_documents=[],
+            retrieval_diagnostics={
+                "strategy": "hybrid",
+                "candidate_count": 2,
+                "lexical_available": True,
+                "selected": [
+                    {
+                        "rank": 1,
+                        "chunk_id": "secret-chunk",
+                        "document_id": "secret-doc",
+                        "channels": ["dense", "lexical"],
+                        "channel_ranks": {"dense": 1, "lexical": 2},
+                        "channel_scores": {"lexical_score": 0.99},
+                        "rrf_score": 0.032,
+                        "raw_text": "must not be logged",
+                    }
+                ],
+            },
+        )
+
+    monkeypatch.setattr("src.server.app.main.ask_question", _ask_with_private_diagnostics)
+
+    with caplog.at_level(logging.INFO, logger="server.ask"):
+        response = client.post(
+            "/ask",
+            json={"question": "Hello world"},
+            headers={"X-API-Key": "test-api-key"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "retrieval_diagnostics" not in payload
+    assert payload["metadata"]["retrieval_strategy"] == "hybrid"
+    assert payload["metadata"]["retrieval_candidate_pool_size"] == 3
+    assert "secret-chunk" not in str(payload)
+    assert "raw_text" not in caplog.text
+    assert "must not be logged" not in caplog.text
+    assert "secret-chunk" in caplog.text
+    assert "secret-doc" in caplog.text
+    assert any(
+        getattr(record, "stage", None) == "retrieval_diagnostics"
+        and getattr(record, "request_id", None)
+        for record in caplog.records
+    )
 
 
 def test_ask_rejects_empty_question(client, auth_headers):
