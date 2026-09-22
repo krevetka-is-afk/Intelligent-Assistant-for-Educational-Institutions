@@ -31,6 +31,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Delete and rebuild the collection before indexing.",
     )
+    parser.add_argument(
+        "--lexical-index-path",
+        type=Path,
+        default=None,
+        help="SQLite FTS5 index path. Defaults to <persist-dir>/lexical_index.sqlite3.",
+    )
     return parser
 
 
@@ -45,6 +51,9 @@ def main() -> int:
             args.input_dir.resolve(),
             args.persist_dir.resolve(),
             rebuild=args.rebuild,
+            lexical_index_path=(
+                args.lexical_index_path.resolve() if args.lexical_index_path is not None else None
+            ),
         )
     except Exception as exc:
         logging.getLogger("server.indexing").exception(
