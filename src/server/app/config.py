@@ -151,9 +151,10 @@ RAG_MAX_HISTORY_MESSAGES = int(getenv("RAG_MAX_HISTORY_MESSAGES", "5") or "5")
 RAG_MAX_HISTORY_CHARS = int(getenv("RAG_MAX_HISTORY_CHARS", "1600") or "1600")
 RAG_SOURCE_SNIPPET_CHARS = int(getenv("RAG_SOURCE_SNIPPET_CHARS", "320") or "320")
 RAG_TOTAL_TIMEOUT_SECONDS = float(getenv("RAG_TOTAL_TIMEOUT_SECONDS", "420") or "420")
+_lexical_index_override = _get_nonempty_env("LEXICAL_INDEX_PATH")
 LEXICAL_INDEX_PATH = (
-    Path(getenv("LEXICAL_INDEX_PATH", "")).expanduser().resolve()
-    if _get_nonempty_env("LEXICAL_INDEX_PATH") is not None
+    Path(_lexical_index_override).expanduser().resolve()
+    if _lexical_index_override is not None
     else (VECTOR_DB_DIR / "lexical_index.sqlite3").resolve()
 )
 RAG_CANDIDATE_POOL_SIZE = int(
@@ -172,6 +173,10 @@ CHUNK_OVERLAP = int(getenv("RAG_CHUNK_OVERLAP", "100") or "100")
 PREPARE_RAG_ON_STARTUP = _get_bool_env("PREPARE_RAG_ON_STARTUP", True)
 AUTO_INDEX_ON_STARTUP = _get_bool_env("AUTO_INDEX_ON_STARTUP", APP_ENV != "production")
 SHOW_SOURCES = _get_bool_env("SHOW_SOURCES", True)
+DOCUMENT_OCR_ENABLED = _get_bool_env("DOCUMENT_OCR_ENABLED", False)
+DOCUMENT_OCR_LANG = getenv("DOCUMENT_OCR_LANG", "rus+eng") or "rus+eng"
+DOCUMENT_OCR_MAX_PAGES = int(getenv("DOCUMENT_OCR_MAX_PAGES", "5") or "5")
+DOCUMENT_OCR_TIMEOUT_SECONDS = float(getenv("DOCUMENT_OCR_TIMEOUT_SECONDS", "30") or "30")
 
 
 def validate_chunk_settings() -> None:
@@ -194,12 +199,15 @@ def validate_rag_policy_settings() -> None:
         "RAG_CANDIDATE_POOL_SIZE": RAG_CANDIDATE_POOL_SIZE,
         "RAG_RRF_K": RAG_RRF_K,
         "RAG_MAX_CHUNKS_PER_DOCUMENT": RAG_MAX_CHUNKS_PER_DOCUMENT,
+        "DOCUMENT_OCR_MAX_PAGES": DOCUMENT_OCR_MAX_PAGES,
     }
     for name, value in positive_settings.items():
         if value <= 0:
             raise ValueError(f"{name} must be positive")
     if RAG_CANDIDATE_POOL_SIZE < RAG_TOP_K:
         raise ValueError("RAG_CANDIDATE_POOL_SIZE must be greater than or equal to RAG_TOP_K")
+    if DOCUMENT_OCR_TIMEOUT_SECONDS <= 0:
+        raise ValueError("DOCUMENT_OCR_TIMEOUT_SECONDS must be positive")
 
 
 def validate_runtime_config() -> None:
