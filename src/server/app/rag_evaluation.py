@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Callable, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
@@ -11,7 +11,7 @@ from typing import Any
 
 from . import config, rag
 from .prompt_policy import build_source_allowlist, evaluate_answer_policy
-from .vector import RetrievedDocument, similarity_search
+from .vector import RetrievedDocument
 
 DEFAULT_EVALUATION_CASES_PATH = (
     Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "rag_eval" / "cases.v1.json"
@@ -27,6 +27,11 @@ class RAGEvaluationCase:
     forbidden_clusters: list[str]
     minimum_answer_points: list[str]
     allow_no_calendar_dates_statement: bool
+    reference_answer: str | None = None
+    reference_source_urls: list[str] = field(default_factory=list)
+    reference_checked_at: str | None = None
+    reference_note: str | None = None
+    source_pdf_page: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +41,7 @@ class RAGEvaluationCandidate:
     metadata: dict[str, Any]
     expected_document_matches: list[str]
     forbidden_cluster_matches: list[str]
+    retrieval_diagnostics: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +49,12 @@ class RAGEvaluationCapture:
     case_id: str
     question: str
     conversation_history: list[str]
+    minimum_answer_points: list[str]
+    reference_answer: str | None
+    reference_source_urls: list[str]
+    reference_checked_at: str | None
+    reference_note: str | None
+    source_pdf_page: int | None
     retrieval_query: str
     top_n: int
     candidates: list[RAGEvaluationCandidate]
@@ -53,6 +65,8 @@ class RAGEvaluationCapture:
     generation_time_ms: int
     total_time_ms: int
     final_answer: str
+    retrieval_metadata: dict[str, Any]
+    retrieval_diagnostics: dict[str, Any]
 
 
 SearchFn = Callable[..., list[RetrievedDocument]]
@@ -88,11 +102,18 @@ def capture_rag_evaluation_case(
     top_n: int = 5,
 ) -> RAGEvaluationCapture:
     total_started = perf_counter()
-    resolved_search_fn = search_fn or (lambda query, *, k: similarity_search(query, k=k))
 
     retrieval_query = rag.build_retrieval_query(case.question, case.conversation_history)
     retrieval_started = perf_counter()
-    retrieved_documents = resolved_search_fn(retrieval_query, k=top_n)
+    if search_fn is None:
+        retrieved_documents, retrieval_metadata, retrieval_diagnostics = rag.retrieve_documents(
+            retrieval_query,
+            k=top_n,
+        )
+    else:
+        retrieved_documents = search_fn(retrieval_query, k=top_n)
+        retrieval_metadata = {}
+        retrieval_diagnostics = {}
     retrieval_elapsed = perf_counter() - retrieval_started
 
     candidates: list[RAGEvaluationCandidate] = []
@@ -114,6 +135,7 @@ def capture_rag_evaluation_case(
                 metadata=metadata,
                 expected_document_matches=expected_matches,
                 forbidden_cluster_matches=forbidden_matches,
+                retrieval_diagnostics=dict(retrieved._retrieval_diagnostics),
             )
         )
 
@@ -159,6 +181,12 @@ def capture_rag_evaluation_case(
         case_id=case.id,
         question=case.question,
         conversation_history=case.conversation_history,
+        minimum_answer_points=case.minimum_answer_points,
+        reference_answer=case.reference_answer,
+        reference_source_urls=case.reference_source_urls,
+        reference_checked_at=case.reference_checked_at,
+        reference_note=case.reference_note,
+        source_pdf_page=case.source_pdf_page,
         retrieval_query=retrieval_query,
         top_n=top_n,
         candidates=candidates,
@@ -169,6 +197,8 @@ def capture_rag_evaluation_case(
         generation_time_ms=round(generation_elapsed * 1000),
         total_time_ms=round(total_elapsed * 1000),
         final_answer=final_answer,
+        retrieval_metadata=retrieval_metadata,
+        retrieval_diagnostics=retrieval_diagnostics,
     )
 
 
@@ -198,7 +228,7 @@ def _json_default(value: Any) -> Any:
 
 def write_capture_report(path: Path, captures: Sequence[RAGEvaluationCapture]) -> None:
     payload = {
-        "schema_version": 1,
+        "schema_version": 3,
         "captured_at": datetime.now(UTC).isoformat(),
         "rag_top_k": config.RAG_TOP_K,
         "baseline_top_n": captures[0].top_n if captures else None,
