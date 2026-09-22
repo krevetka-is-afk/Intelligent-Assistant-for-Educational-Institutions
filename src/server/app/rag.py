@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
 
+from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama.llms import OllamaLLM
 
@@ -25,6 +26,11 @@ from .prompt_policy import (
     evaluate_answer_policy,
 )
 from .vector import RetrievedDocument, similarity_search
+
+try:
+    from .lexical import search_lexical
+except ImportError:  # pragma: no cover - lexical lane may be absent during partial builds
+    search_lexical = None
 
 _ALLOWED_METADATA_KEYS = {
     "source",
@@ -63,6 +69,7 @@ class RAGResponse:
     metadata: dict[str, Any]
     retrieved_documents: list[RetrievedDocument]
     policy_audit: AnswerPolicyAudit | None = None
+    retrieval_diagnostics: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 def _get_llm_chain():
@@ -178,6 +185,300 @@ def build_retrieval_query(question: str, conversation_history: list[str] | None)
     return question.strip()
 
 
+def _get_positive_int_config(name: str, default: int) -> int:
+    value = getattr(config, name, default)
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError):
+        return default
+    return resolved if resolved > 0 else default
+
+
+def _bounded_distance(value: Any, *, fallback: float) -> float:
+    try:
+        distance = float(value)
+    except (TypeError, ValueError):
+        distance = fallback
+    return max(0.0, min(1.0, distance))
+
+
+def dense_similarity_search(question: str, *, k: int) -> list[RetrievedDocument]:
+    return similarity_search(question, k=k)
+
+
+def _chunk_key(retrieved: RetrievedDocument) -> tuple[Any, ...]:
+    metadata = retrieved.document.metadata or {}
+    chunk_id = metadata.get("chunk_id")
+    if chunk_id is not None:
+        return ("chunk_id", chunk_id)
+    return (
+        "chunk",
+        metadata.get("document_id"),
+        metadata.get("source"),
+        metadata.get("page"),
+        metadata.get("chunk_index"),
+        retrieved.document.page_content,
+    )
+
+
+def _document_key(retrieved: RetrievedDocument) -> tuple[Any, ...]:
+    metadata = retrieved.document.metadata or {}
+    document_id = metadata.get("document_id")
+    if document_id is not None:
+        return ("document_id", document_id)
+    return ("document", metadata.get("source"), metadata.get("title"))
+
+
+def _chunk_index(retrieved: RetrievedDocument) -> int | None:
+    value = (retrieved.document.metadata or {}).get("chunk_index")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _lexical_result_to_retrieved(result: Any) -> RetrievedDocument | None:
+    document = getattr(result, "document", None)
+    score = getattr(result, "score", None)
+    if isinstance(result, dict):
+        document = result.get("document", document)
+        score = result.get("score", score)
+        if document is None and "content" in result:
+            document = Document(
+                page_content=str(result.get("content") or ""),
+                metadata=dict(result.get("metadata") or {}),
+            )
+    if document is None:
+        return None
+    if not hasattr(document, "page_content") or not hasattr(document, "metadata"):
+        return None
+    try:
+        lexical_score = float(score)
+    except (TypeError, ValueError):
+        lexical_score = 0.0
+    return RetrievedDocument(
+        document=document,
+        distance=_bounded_distance(1.0 - lexical_score, fallback=1.0),
+        _retrieval_diagnostics={"lexical_score": lexical_score},
+    )
+
+
+def lexical_similarity_search(question: str, *, k: int) -> tuple[list[RetrievedDocument], bool]:
+    if search_lexical is None:
+        return [], False
+
+    kwargs: dict[str, Any] = {"limit": k}
+    if hasattr(config, "LEXICAL_INDEX_PATH"):
+        kwargs["index_path"] = getattr(config, "LEXICAL_INDEX_PATH")
+
+    try:
+        raw_results = search_lexical(question, **kwargs)
+    except Exception as exc:
+        logger.warning(
+            "Lexical search failed, degrading to dense-only retrieval: %s",
+            exc,
+            extra=log_extra(stage="retrieval", error_type=type(exc).__name__),
+        )
+        return [], False
+
+    retrieved: list[RetrievedDocument] = []
+    for result in raw_results:
+        item = _lexical_result_to_retrieved(result)
+        if item is not None:
+            retrieved.append(item)
+    return retrieved, True
+
+
+def _is_adjacent_to_selected(
+    retrieved: RetrievedDocument,
+    selected_by_document: dict[tuple[Any, ...], set[int]],
+) -> bool:
+    current_index = _chunk_index(retrieved)
+    if current_index is None:
+        return False
+    selected_indices = selected_by_document.get(_document_key(retrieved), set())
+    return any(abs(current_index - selected_index) == 1 for selected_index in selected_indices)
+
+
+def _rank_hybrid_documents(
+    *,
+    dense_documents: list[RetrievedDocument],
+    lexical_documents: list[RetrievedDocument],
+    top_k: int,
+    rrf_k: int,
+    max_chunks_per_document: int,
+) -> tuple[list[RetrievedDocument], dict[str, Any]]:
+    candidates: dict[tuple[Any, ...], dict[str, Any]] = {}
+
+    def add_candidate(channel: str, rank: int, retrieved: RetrievedDocument) -> None:
+        key = _chunk_key(retrieved)
+        candidate = candidates.setdefault(
+            key,
+            {
+                "key": key,
+                "document_key": _document_key(retrieved),
+                "retrieved": retrieved,
+                "rrf_score": 0.0,
+                "channel_ranks": {},
+                "channel_scores": {},
+                "best_rank": rank,
+            },
+        )
+        if channel == "dense":
+            candidate["retrieved"] = retrieved
+            candidate["channel_scores"]["dense_distance"] = float(retrieved.distance)
+        elif "dense" not in candidate["channel_ranks"]:
+            candidate["retrieved"] = retrieved
+        candidate["rrf_score"] += 1.0 / (rrf_k + rank)
+        candidate["channel_ranks"][channel] = rank
+        candidate["best_rank"] = min(candidate["best_rank"], rank)
+        if channel == "lexical":
+            score = retrieved._retrieval_diagnostics.get("lexical_score")
+            if score is not None:
+                candidate["channel_scores"]["lexical_score"] = score
+
+    for rank, retrieved in enumerate(dense_documents, start=1):
+        add_candidate("dense", rank, retrieved)
+    for rank, retrieved in enumerate(lexical_documents, start=1):
+        add_candidate("lexical", rank, retrieved)
+
+    ordered_candidates = sorted(
+        candidates.values(),
+        key=lambda item: (-item["rrf_score"], item["best_rank"], repr(item["key"])),
+    )
+
+    selected: list[dict[str, Any]] = []
+    selected_keys: set[tuple[Any, ...]] = set()
+    selected_by_document: dict[tuple[Any, ...], set[int]] = {}
+    document_counts: dict[tuple[Any, ...], int] = {}
+
+    def select(candidate: dict[str, Any]) -> None:
+        retrieved = candidate["retrieved"]
+        key = candidate["key"]
+        document_key = candidate["document_key"]
+        selected.append(candidate)
+        selected_keys.add(key)
+        document_counts[document_key] = document_counts.get(document_key, 0) + 1
+        current_index = _chunk_index(retrieved)
+        if current_index is not None:
+            selected_by_document.setdefault(document_key, set()).add(current_index)
+
+    def eligible(
+        candidate: dict[str, Any],
+        *,
+        require_new_document: bool,
+        suppress_adjacent: bool,
+    ) -> bool:
+        if len(selected) >= top_k or candidate["key"] in selected_keys:
+            return False
+        retrieved = candidate["retrieved"]
+        document_key = candidate["document_key"]
+        if require_new_document and document_counts.get(document_key, 0) > 0:
+            return False
+        if document_counts.get(document_key, 0) >= max_chunks_per_document:
+            return False
+        return not (suppress_adjacent and _is_adjacent_to_selected(retrieved, selected_by_document))
+
+    for candidate in ordered_candidates:
+        if eligible(candidate, require_new_document=True, suppress_adjacent=True):
+            select(candidate)
+    for candidate in ordered_candidates:
+        if eligible(candidate, require_new_document=False, suppress_adjacent=True):
+            select(candidate)
+    for candidate in ordered_candidates:
+        if eligible(candidate, require_new_document=False, suppress_adjacent=False):
+            select(candidate)
+
+    selected_documents: list[RetrievedDocument] = []
+    selected_diagnostics: list[dict[str, Any]] = []
+    max_rrf_score = max((float(candidate["rrf_score"]) for candidate in selected), default=0.0)
+    for rank, candidate in enumerate(selected, start=1):
+        retrieved = candidate["retrieved"]
+        if "dense" in candidate["channel_ranks"]:
+            retrieved.distance = _bounded_distance(retrieved.distance, fallback=1.0)
+        else:
+            normalized_fusion_score = (
+                float(candidate["rrf_score"]) / max_rrf_score if max_rrf_score > 0 else 0.0
+            )
+            retrieved.distance = _bounded_distance(1.0 - normalized_fusion_score, fallback=1.0)
+        diagnostics = {
+            "rank": rank,
+            "chunk_id": (retrieved.document.metadata or {}).get("chunk_id"),
+            "document_id": (retrieved.document.metadata or {}).get("document_id"),
+            "channels": sorted(candidate["channel_ranks"]),
+            "channel_ranks": dict(candidate["channel_ranks"]),
+            "channel_scores": dict(candidate["channel_scores"]),
+            "rrf_score": round(float(candidate["rrf_score"]), 8),
+        }
+        retrieved._retrieval_diagnostics = diagnostics
+        selected_documents.append(retrieved)
+        selected_diagnostics.append(diagnostics)
+
+    return selected_documents, {
+        "selected": selected_diagnostics,
+        "candidate_count": len(ordered_candidates),
+    }
+
+
+def _attach_retrieval_diagnostics(
+    bounded_documents: list[RetrievedDocument],
+    source_documents: list[RetrievedDocument],
+) -> list[RetrievedDocument]:
+    diagnostics_by_key = {
+        _chunk_key(retrieved): retrieved._retrieval_diagnostics for retrieved in source_documents
+    }
+    for retrieved in bounded_documents:
+        retrieved._retrieval_diagnostics = dict(diagnostics_by_key.get(_chunk_key(retrieved), {}))
+    return bounded_documents
+
+
+def retrieve_documents(question: str, *, k: int | None = None) -> tuple[
+    list[RetrievedDocument],
+    dict[str, Any],
+    dict[str, Any],
+]:
+    top_k = k or config.RAG_TOP_K
+    candidate_pool_size = max(
+        top_k,
+        _get_positive_int_config("RAG_CANDIDATE_POOL_SIZE", max(top_k * 4, top_k)),
+    )
+    rrf_k = _get_positive_int_config("RAG_RRF_K", 60)
+    max_chunks_per_document = _get_positive_int_config("RAG_MAX_CHUNKS_PER_DOCUMENT", 1)
+
+    dense_documents = dense_similarity_search(question, k=candidate_pool_size)
+    lexical_documents, lexical_available = lexical_similarity_search(
+        question,
+        k=candidate_pool_size,
+    )
+
+    retrieved_documents, diagnostics = _rank_hybrid_documents(
+        dense_documents=dense_documents,
+        lexical_documents=lexical_documents,
+        top_k=top_k,
+        rrf_k=rrf_k,
+        max_chunks_per_document=max_chunks_per_document,
+    )
+    strategy = "hybrid" if lexical_documents else "dense_only"
+
+    retrieval_metadata = {
+        "retrieval_strategy": strategy,
+        "retrieval_candidate_pool_size": candidate_pool_size,
+        "retrieval_dense_candidate_count": len(dense_documents),
+        "retrieval_lexical_candidate_count": len(lexical_documents),
+        "retrieval_lexical_available": lexical_available,
+    }
+    diagnostics.update(
+        {
+            "strategy": strategy,
+            "candidate_pool_size": candidate_pool_size,
+            "rrf_k": rrf_k,
+            "max_chunks_per_document": max_chunks_per_document,
+            "lexical_available": lexical_available,
+        }
+    )
+    return retrieved_documents, retrieval_metadata, diagnostics
+
+
 def invoke_llm(
     question: str,
     retrieved_documents: list[RetrievedDocument],
@@ -277,8 +578,9 @@ def _policy_metadata(
     policy_repair_attempted: bool = False,
     policy_repair_succeeded: bool = False,
     policy_repair_skipped_reason: str | None = None,
+    retrieval_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    metadata = {
         "model": config.LLM_MODEL,
         "embedding_model": config.HF_EMBEDDING_MODEL,
         "policy_version": PROMPT_POLICY_VERSION,
@@ -302,6 +604,9 @@ def _policy_metadata(
         "policy_output_repair_succeeded": policy_repair_succeeded,
         "policy_output_repair_skipped_reason": policy_repair_skipped_reason,
     }
+    if retrieval_metadata is not None:
+        metadata.update(retrieval_metadata)
+    return metadata
 
 
 def build_policy_refusal(
@@ -323,6 +628,7 @@ def build_policy_refusal(
             total_elapsed=total_elapsed,
         ),
         retrieved_documents=[],
+        retrieval_diagnostics={},
     )
 
 
@@ -349,8 +655,8 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
 
     retrieval_query = build_retrieval_query(question, conversation_history)
     retrieval_started = perf_counter()
-    retrieved_documents = await asyncio.to_thread(
-        similarity_search,
+    retrieved_documents, retrieval_metadata, retrieval_diagnostics = await asyncio.to_thread(
+        retrieve_documents,
         retrieval_query,
         k=config.RAG_TOP_K,
     )
@@ -372,8 +678,10 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
                 "retrieval_time_ms": round(retrieval_elapsed * 1000),
                 "generation_time_ms": 0,
                 "total_time_ms": round(total_elapsed * 1000),
+                **retrieval_metadata,
             },
             retrieved_documents=retrieved_documents,
+            retrieval_diagnostics=retrieval_diagnostics,
         )
 
     compiled_prompt = _prompt_compiler.compile(
@@ -381,7 +689,10 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
         retrieved_documents=retrieved_documents,
         conversation_history=conversation_history,
     )
-    bounded_documents = list(compiled_prompt.retrieved_documents)
+    bounded_documents = _attach_retrieval_diagnostics(
+        list(compiled_prompt.retrieved_documents),
+        retrieved_documents,
+    )
     sources = deduplicate_sources(bounded_documents)
     source_allowlist = build_source_allowlist(sources)
     generation_elapsed = 0.0
@@ -523,6 +834,7 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
         policy_repair_attempted=policy_repair_attempted,
         policy_repair_succeeded=policy_repair_succeeded,
         policy_repair_skipped_reason=policy_repair_skipped_reason,
+        retrieval_metadata=retrieval_metadata,
     )
 
     return RAGResponse(
@@ -531,4 +843,5 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
         metadata=metadata,
         retrieved_documents=bounded_documents,
         policy_audit=policy_result.audit if policy_result is not None else None,
+        retrieval_diagnostics=retrieval_diagnostics,
     )
