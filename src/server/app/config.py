@@ -151,6 +151,16 @@ RAG_MAX_HISTORY_MESSAGES = int(getenv("RAG_MAX_HISTORY_MESSAGES", "5") or "5")
 RAG_MAX_HISTORY_CHARS = int(getenv("RAG_MAX_HISTORY_CHARS", "1600") or "1600")
 RAG_SOURCE_SNIPPET_CHARS = int(getenv("RAG_SOURCE_SNIPPET_CHARS", "320") or "320")
 RAG_TOTAL_TIMEOUT_SECONDS = float(getenv("RAG_TOTAL_TIMEOUT_SECONDS", "420") or "420")
+LEXICAL_INDEX_PATH = (
+    Path(getenv("LEXICAL_INDEX_PATH", "")).expanduser().resolve()
+    if _get_nonempty_env("LEXICAL_INDEX_PATH") is not None
+    else (VECTOR_DB_DIR / "lexical_index.sqlite3").resolve()
+)
+RAG_CANDIDATE_POOL_SIZE = int(
+    getenv("RAG_CANDIDATE_POOL_SIZE", str(max(RAG_TOP_K * 4, 10))) or str(max(RAG_TOP_K * 4, 10))
+)
+RAG_RRF_K = int(getenv("RAG_RRF_K", "60") or "60")
+RAG_MAX_CHUNKS_PER_DOCUMENT = int(getenv("RAG_MAX_CHUNKS_PER_DOCUMENT", "2") or "2")
 LLM_TIMEOUT_SECONDS = float(getenv("LLM_TIMEOUT_SECONDS", "360") or "360")
 CONVERSATION_MEMORY_WINDOW = int(getenv("CONVERSATION_MEMORY_WINDOW", "5") or "5")
 CONVERSATION_MEMORY_TTL_SECONDS = float(getenv("CONVERSATION_MEMORY_TTL_SECONDS", "3600") or "3600")
@@ -181,10 +191,15 @@ def validate_rag_policy_settings() -> None:
         "RAG_MAX_HISTORY_MESSAGES": RAG_MAX_HISTORY_MESSAGES,
         "RAG_MAX_HISTORY_CHARS": RAG_MAX_HISTORY_CHARS,
         "RAG_SOURCE_SNIPPET_CHARS": RAG_SOURCE_SNIPPET_CHARS,
+        "RAG_CANDIDATE_POOL_SIZE": RAG_CANDIDATE_POOL_SIZE,
+        "RAG_RRF_K": RAG_RRF_K,
+        "RAG_MAX_CHUNKS_PER_DOCUMENT": RAG_MAX_CHUNKS_PER_DOCUMENT,
     }
     for name, value in positive_settings.items():
         if value <= 0:
             raise ValueError(f"{name} must be positive")
+    if RAG_CANDIDATE_POOL_SIZE < RAG_TOP_K:
+        raise ValueError("RAG_CANDIDATE_POOL_SIZE must be greater than or equal to RAG_TOP_K")
 
 
 def validate_runtime_config() -> None:
