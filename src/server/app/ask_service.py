@@ -34,6 +34,34 @@ POLICY_REJECTION_FALLBACK_REASONS = frozenset(
 policy_audit_logger = logging.getLogger("server.rag.policy_audit")
 
 
+def _sanitize_selected_retrieval_diagnostics(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+
+    selected: list[dict[str, object]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        selected.append(
+            {
+                "rank": item.get("rank"),
+                "chunk_id": item.get("chunk_id"),
+                "document_id": item.get("document_id"),
+                "channels": item.get("channels") if isinstance(item.get("channels"), list) else [],
+                "channel_ranks": (
+                    item.get("channel_ranks") if isinstance(item.get("channel_ranks"), dict) else {}
+                ),
+                "channel_scores": (
+                    item.get("channel_scores")
+                    if isinstance(item.get("channel_scores"), dict)
+                    else {}
+                ),
+                "rrf_score": item.get("rrf_score"),
+            }
+        )
+    return selected
+
+
 def _conversation_memory_key_for_success(
     memory_key: str | None,
     result: RAGResponse | None,
@@ -232,6 +260,28 @@ class AskService:
                         error_type=policy_reason,
                     ),
                 )
+
+        retrieval_diagnostics = result.retrieval_diagnostics
+        if isinstance(retrieval_diagnostics, dict) and retrieval_diagnostics:
+            selected_diagnostics = _sanitize_selected_retrieval_diagnostics(
+                retrieval_diagnostics.get("selected")
+            )
+            self._logger.info(
+                (
+                    "Retrieval diagnostics strategy=%s candidates=%s selected=%s "
+                    "lexical_available=%s"
+                ),
+                retrieval_diagnostics.get("strategy"),
+                retrieval_diagnostics.get("candidate_count"),
+                selected_diagnostics,
+                retrieval_diagnostics.get("lexical_available"),
+                extra=log_extra(
+                    request_id=request_id,
+                    endpoint=endpoint,
+                    stage="retrieval_diagnostics",
+                    web_user_id=web_user_id_value,
+                ),
+            )
 
         self._logger.info(
             (
