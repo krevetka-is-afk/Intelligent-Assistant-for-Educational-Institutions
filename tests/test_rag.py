@@ -653,6 +653,7 @@ def test_ask_question_uses_current_question_for_retrieval_and_history_for_llm(mo
         observed["llm_history"] = history
         return "ok"
 
+    monkeypatch.setattr(rag.config, "RAG_CANDIDATE_POOL_SIZE", 7, raising=False)
     monkeypatch.setattr(rag, "similarity_search", _similarity_search)
     monkeypatch.setattr(rag, "invoke_llm", _invoke_llm)
 
@@ -664,7 +665,7 @@ def test_ask_question_uses_current_question_for_retrieval_and_history_for_llm(mo
     )
 
     assert result.answer == "ok"
-    assert observed["k"] == rag.config.RAG_TOP_K
+    assert observed["k"] == 7
     assert observed["query"] == "А что по дедлайну?"
     assert observed["llm_question"] == "А что по дедлайну?"
     assert observed["llm_documents"] == docs
@@ -729,6 +730,10 @@ def test_capture_rag_evaluation_case_records_retrieval_baseline_without_llm():
                 },
             ),
             distance=0.11,
+            _retrieval_diagnostics={
+                "channels": ["dense", "lexical"],
+                "channel_ranks": {"dense": 2, "lexical": 1},
+            },
         ),
         RetrievedDocument(
             document=Document(
@@ -762,6 +767,12 @@ def test_capture_rag_evaluation_case_records_retrieval_baseline_without_llm():
     assert capture.candidates[0].expected_document_matches == [
         "Памятка студенту о первой пересдаче"
     ]
+    assert capture.candidates[0].retrieval_diagnostics == {
+        "channels": ["dense", "lexical"],
+        "channel_ranks": {"dense": 2, "lexical": 1},
+    }
+    assert capture.retrieval_metadata == {}
+    assert capture.retrieval_diagnostics == {}
     assert capture.candidates[1].forbidden_cluster_matches == ["Правила внутреннего распорядка"]
     assert capture.fallback_used is True
     assert capture.fallback_reason == "evaluation_answer_generator_not_configured"
@@ -869,7 +880,7 @@ def test_write_capture_report_includes_baseline_metadata(tmp_path):
     write_capture_report(report_path, [capture])
 
     payload = json.loads(report_path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 3
     assert payload["captured_at"]
     assert payload["baseline_top_n"] == 5
     assert payload["captures"][0]["case_id"] == case.id
