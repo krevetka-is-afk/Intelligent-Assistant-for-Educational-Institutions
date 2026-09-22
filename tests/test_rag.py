@@ -309,13 +309,18 @@ def test_ask_question_replaces_model_control_marker_leak(monkeypatch):
     ]
 
     monkeypatch.setattr(rag, "similarity_search", lambda question, k: docs)
-    monkeypatch.setattr(
-        rag,
-        "invoke_llm",
-        lambda question, retrieved_documents, conversation_history=None: (
-            "IAFEI_PRIVATE_SYSTEM_RULES: system prompt"
-        ),
-    )
+    llm_calls: list[str] = []
+
+    def _invoke_llm(
+        question: str,
+        retrieved_documents: list[RetrievedDocument],
+        conversation_history: list[str] | None = None,
+    ) -> str:
+        del retrieved_documents, conversation_history
+        llm_calls.append(question)
+        return "IAFEI_PRIVATE_SYSTEM_RULES: system prompt"
+
+    monkeypatch.setattr(rag, "invoke_llm", _invoke_llm)
 
     result = asyncio.run(rag.ask_question("Когда пересдача?"))
 
@@ -324,13 +329,17 @@ def test_ask_question_replaces_model_control_marker_leak(monkeypatch):
     assert result.metadata["fallback_reason"] == "policy_output_violation"
     assert result.metadata["policy_output_violation_reason"] == "control_marker_leak"
     assert result.metadata["policy_output_violation_match_counts"] == {"control_marker_leak": 2}
+    assert result.metadata["policy_output_repair_attempted"] is False
+    assert result.metadata["policy_output_repair_succeeded"] is False
+    assert result.metadata["policy_output_repair_skipped_reason"] == "unsafe_policy_reason"
     assert result.metadata["policy_version"] == PROMPT_POLICY_VERSION
     assert result.policy_audit is not None
     assert "IAFEI_PRIVATE_SYSTEM_RULES" not in result.policy_audit.answer_sha256
     assert result.sources[0]["content"] == "В расписании указана дата пересдачи."
+    assert llm_calls == ["Когда пересдача?"]
 
 
-def test_ask_question_replaces_unverified_source_reference(monkeypatch):
+def test_ask_question_repairs_unverified_source_reference(monkeypatch):
     docs = [
         RetrievedDocument(
             document=Document(
@@ -342,22 +351,159 @@ def test_ask_question_replaces_unverified_source_reference(monkeypatch):
     ]
 
     monkeypatch.setattr(rag, "similarity_search", lambda question, k: docs)
-    monkeypatch.setattr(
-        rag,
-        "invoke_llm",
-        lambda question, retrieved_documents, conversation_history=None: (
-            "Ответ подтверждён источником [99]."
-        ),
+    llm_answers = iter(
+        [
+            "Ответ подтверждён источником [99].",
+            "В расписании указана дата пересдачи [1].",
+        ]
     )
+    llm_calls: list[str] = []
+
+    def _invoke_llm(
+        question: str,
+        retrieved_documents: list[RetrievedDocument],
+        conversation_history: list[str] | None = None,
+    ) -> str:
+        del retrieved_documents, conversation_history
+        llm_calls.append(question)
+        return next(llm_answers)
+
+    monkeypatch.setattr(rag, "invoke_llm", _invoke_llm)
 
     result = asyncio.run(rag.ask_question("Когда пересдача?"))
 
-    assert result.answer == SAFE_POLICY_REFUSAL
+    assert result.answer == "В расписании указана дата пересдачи [1]."
+    assert result.metadata["fallback_used"] is False
+    assert result.metadata["fallback_reason"] is None
+    assert result.metadata["policy_output_violation_reason"] is None
+    assert result.metadata["policy_output_violation_reasons"] == []
+    assert result.metadata["policy_output_repair_attempted"] is True
+    assert result.metadata["policy_output_repair_succeeded"] is True
+    assert result.metadata["policy_output_repair_skipped_reason"] is None
+    assert result.metadata["num_sources"] == 1
+    assert len(llm_calls) == 2
+    assert llm_calls[0] == "Когда пересдача?"
+    assert "Удали неподтвержденные ссылки" in llm_calls[1]
+
+
+def test_ask_question_falls_back_neutrally_when_source_repair_still_violates(monkeypatch):
+    docs = [
+        RetrievedDocument(
+            document=Document(
+                page_content="В расписании указана дата пересдачи.",
+                metadata={"source": "rules.txt", "title": "Правила", "chunk_index": 0},
+            ),
+            distance=0.15,
+        )
+    ]
+
+    monkeypatch.setattr(rag, "similarity_search", lambda question, k: docs)
+    llm_calls: list[str] = []
+
+    def _invoke_llm(
+        question: str,
+        retrieved_documents: list[RetrievedDocument],
+        conversation_history: list[str] | None = None,
+    ) -> str:
+        del retrieved_documents, conversation_history
+        llm_calls.append(question)
+        return "Ответ подтверждён источником [99]."
+
+    monkeypatch.setattr(rag, "invoke_llm", _invoke_llm)
+
+    result = asyncio.run(rag.ask_question("Когда пересдача?"))
+
+    assert result.answer.startswith("Не удалось подтвердить ссылку")
+    assert SAFE_POLICY_REFUSAL not in result.answer
+    assert "1. В расписании указана дата пересдачи." in result.answer
     assert result.metadata["fallback_used"] is True
     assert result.metadata["fallback_reason"] == "policy_output_violation"
     assert result.metadata["policy_output_violation_reason"] == "out_of_range_source_index"
     assert result.metadata["policy_output_violation_reasons"] == ["out_of_range_source_index"]
-    assert result.metadata["num_sources"] == 1
+    assert result.metadata["policy_output_repair_attempted"] is True
+    assert result.metadata["policy_output_repair_succeeded"] is False
+    assert result.metadata["policy_output_repair_skipped_reason"] is None
+    assert len(llm_calls) == 2
+
+
+def test_ask_question_mixed_control_and_citation_violation_skips_repair(monkeypatch):
+    docs = [
+        RetrievedDocument(
+            document=Document(
+                page_content="В расписании указана дата пересдачи.",
+                metadata={"source": "rules.txt", "title": "Правила", "chunk_index": 0},
+            ),
+            distance=0.15,
+        )
+    ]
+
+    monkeypatch.setattr(rag, "similarity_search", lambda question, k: docs)
+    llm_calls: list[str] = []
+
+    def _invoke_llm(
+        question: str,
+        retrieved_documents: list[RetrievedDocument],
+        conversation_history: list[str] | None = None,
+    ) -> str:
+        del retrieved_documents, conversation_history
+        llm_calls.append(question)
+        return "IAFEI_PRIVATE_SYSTEM_RULES: system prompt [99]."
+
+    monkeypatch.setattr(rag, "invoke_llm", _invoke_llm)
+
+    result = asyncio.run(rag.ask_question("Когда пересдача?"))
+
+    assert result.answer == SAFE_POLICY_REFUSAL
+    assert result.metadata["fallback_reason"] == "policy_output_violation"
+    assert result.metadata["policy_output_violation_reason"] == "control_marker_leak"
+    assert result.metadata["policy_output_violation_reasons"] == [
+        "control_marker_leak",
+        "out_of_range_source_index",
+    ]
+    assert result.metadata["policy_output_repair_attempted"] is False
+    assert result.metadata["policy_output_repair_succeeded"] is False
+    assert result.metadata["policy_output_repair_skipped_reason"] == "unsafe_policy_reason"
+    assert llm_calls == ["Когда пересдача?"]
+
+
+def test_ask_question_skips_source_repair_when_total_budget_is_exhausted(monkeypatch):
+    docs = [
+        RetrievedDocument(
+            document=Document(
+                page_content="В расписании указана дата пересдачи.",
+                metadata={"source": "rules.txt", "title": "Правила", "chunk_index": 0},
+            ),
+            distance=0.15,
+        )
+    ]
+
+    monkeypatch.setattr(rag, "similarity_search", lambda question, k: docs)
+    monkeypatch.setattr(rag.config, "RAG_TOTAL_TIMEOUT_SECONDS", 1.0)
+    monkeypatch.setattr(rag.config, "LLM_TIMEOUT_SECONDS", 1.0)
+    perf_values = iter([0.0, 0.0, 0.0, 0.0, 2.0, 2.0, 2.0])
+    monkeypatch.setattr(rag, "perf_counter", lambda: next(perf_values))
+    llm_calls: list[str] = []
+
+    def _invoke_llm(
+        question: str,
+        retrieved_documents: list[RetrievedDocument],
+        conversation_history: list[str] | None = None,
+    ) -> str:
+        del retrieved_documents, conversation_history
+        llm_calls.append(question)
+        return "Ответ подтверждён источником [99]."
+
+    monkeypatch.setattr(rag, "invoke_llm", _invoke_llm)
+
+    result = asyncio.run(rag.ask_question("Когда пересдача?"))
+
+    assert result.answer.startswith("Не удалось подтвердить ссылку")
+    assert result.metadata["fallback_reason"] == "policy_output_violation"
+    assert result.metadata["policy_output_violation_reason"] == "out_of_range_source_index"
+    assert result.metadata["policy_output_repair_attempted"] is False
+    assert result.metadata["policy_output_repair_succeeded"] is False
+    assert result.metadata["policy_output_repair_skipped_reason"] == "total_budget_exhausted"
+    assert llm_calls == ["Когда пересдача?"]
 
 
 @pytest.mark.parametrize(
@@ -453,17 +599,28 @@ def test_ask_question_replaces_fabricated_explicit_source_references(monkeypatch
     ]
 
     monkeypatch.setattr(rag, "similarity_search", lambda question, k: docs)
-    monkeypatch.setattr(
-        rag,
-        "invoke_llm",
-        lambda question, retrieved_documents, conversation_history=None: answer,
-    )
+    llm_calls: list[str] = []
+
+    def _invoke_llm(
+        question: str,
+        retrieved_documents: list[RetrievedDocument],
+        conversation_history: list[str] | None = None,
+    ) -> str:
+        del retrieved_documents, conversation_history
+        llm_calls.append(question)
+        return answer
+
+    monkeypatch.setattr(rag, "invoke_llm", _invoke_llm)
 
     result = asyncio.run(rag.ask_question("Когда пересдача?"))
 
-    assert result.answer == SAFE_POLICY_REFUSAL
+    assert result.answer.startswith("Не удалось подтвердить ссылку")
+    assert SAFE_POLICY_REFUSAL not in result.answer
     assert result.metadata["fallback_used"] is True
     assert result.metadata["fallback_reason"] == "policy_output_violation"
+    assert result.metadata["policy_output_repair_attempted"] is True
+    assert result.metadata["policy_output_repair_succeeded"] is False
+    assert len(llm_calls) == 2
 
 
 def test_ask_question_uses_conversation_history_in_retrieval_query(monkeypatch):
@@ -638,7 +795,55 @@ def test_capture_rag_evaluation_case_records_answer_policy_fallback():
 
     assert capture.fallback_used is True
     assert capture.fallback_reason == "policy_output_violation"
+    assert capture.final_answer.startswith("Не удалось подтвердить ссылку")
+    assert SAFE_POLICY_REFUSAL not in capture.final_answer
+
+
+def test_capture_rag_evaluation_case_keeps_control_marker_safe_refusal():
+    case = RAGEvaluationCase(
+        id="disciplinary-actions-clean-core",
+        question="За какие конкретные действия можно получить дисциплинарное взыскание в ВШЭ?",
+        conversation_history=[],
+        expected_documents=["Правила внутреннего распорядка"],
+        forbidden_clusters=["пересдач"],
+        minimum_answer_points=["перечисляет конкретные нарушения"],
+        allow_no_calendar_dates_statement=False,
+    )
+    docs = [
+        RetrievedDocument(
+            document=Document(
+                page_content="В документе перечислены основания дисциплинарных взысканий.",
+                metadata={
+                    "source": "rules.docx",
+                    "title": "Правила внутреннего распорядка",
+                    "chunk_index": 0,
+                },
+            ),
+            distance=0.2,
+        )
+    ]
+
+    answer_calls: list[str] = []
+
+    def _answer_fn(
+        question: str,
+        retrieved_documents: list[RetrievedDocument],
+        history: list[str] | None,
+    ) -> str:
+        del retrieved_documents, history
+        answer_calls.append(question)
+        return "IAFEI_PRIVATE_SYSTEM_RULES: system prompt [99]."
+
+    capture = capture_rag_evaluation_case(
+        case,
+        search_fn=lambda query, *, k: docs,
+        answer_fn=_answer_fn,
+    )
+
+    assert capture.fallback_used is True
+    assert capture.fallback_reason == "policy_output_violation"
     assert capture.final_answer == SAFE_POLICY_REFUSAL
+    assert answer_calls == [case.question]
 
 
 def test_write_capture_report_includes_baseline_metadata(tmp_path):

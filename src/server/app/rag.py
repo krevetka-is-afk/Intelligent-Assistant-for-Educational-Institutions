@@ -16,6 +16,7 @@ from .prompt_policy import (
     PROMPT_POLICY_VERSION,
     SAFE_POLICY_REFUSAL,
     AnswerPolicyAudit,
+    AnswerPolicyReason,
     AnswerPolicyResult,
     CompiledPrompt,
     PromptCompiler,
@@ -45,6 +46,14 @@ _ALLOWED_METADATA_KEYS = {
 _llm_chain = None
 _prompt_compiler = PromptCompiler()
 logger = logging.getLogger("server.rag")
+_REPAIRABLE_ANSWER_POLICY_REASONS: frozenset[AnswerPolicyReason] = frozenset(
+    {
+        "out_of_range_source_index",
+        "unverified_labeled_source",
+        "unverified_url",
+        "unverified_filename",
+    }
+)
 
 
 @dataclass(slots=True)
@@ -205,7 +214,9 @@ def build_empty_answer() -> str:
     return "Не удалось найти релевантные документы по этому вопросу."
 
 
-def build_fallback_answer(retrieved_documents: list[RetrievedDocument]) -> str:
+def _build_document_fallback_answer(
+    retrieved_documents: list[RetrievedDocument], *, prefix: str
+) -> str:
     snippets: list[str] = []
     for index, retrieved in enumerate(retrieved_documents[:4], start=1):
         compact = " ".join(retrieved.document.page_content.split())
@@ -217,9 +228,45 @@ def build_fallback_answer(retrieved_documents: list[RetrievedDocument]) -> str:
     if not snippets:
         return build_empty_answer()
 
+    return prefix + "\n\n" + "\n\n".join(snippets)
+
+
+def build_fallback_answer(retrieved_documents: list[RetrievedDocument]) -> str:
+    return _build_document_fallback_answer(
+        retrieved_documents,
+        prefix=(
+            "LLM временно недоступна, поэтому показываю наиболее релевантные фрагменты "
+            "из найденных документов."
+        ),
+    )
+
+
+def build_policy_output_fallback_answer(retrieved_documents: list[RetrievedDocument]) -> str:
+    return _build_document_fallback_answer(
+        retrieved_documents,
+        prefix=(
+            "Не удалось подтвердить ссылку в сгенерированном ответе, поэтому показываю "
+            "нейтральную выдержку из найденных документов."
+        ),
+    )
+
+
+def _requires_safe_policy_refusal(policy_result: AnswerPolicyResult) -> bool:
+    return "control_marker_leak" in policy_result.reasons
+
+
+def _allows_policy_repair(policy_result: AnswerPolicyResult) -> bool:
+    reasons = set(policy_result.reasons)
+    return bool(reasons) and reasons <= _REPAIRABLE_ANSWER_POLICY_REASONS
+
+
+def _build_repair_question(question: str) -> str:
     return (
-        "LLM временно недоступна, поэтому показываю наиболее релевантные фрагменты "
-        "из найденных документов.\n\n" + "\n\n".join(snippets)
+        "Повтори ответ на вопрос пользователя, используя только переданные найденные "
+        "документы. Удали неподтвержденные ссылки, URL, имена файлов и источники. "
+        "Если нужны ссылки, используй только номера существующих источников в формате "
+        "[1], [2] и так далее.\n\n"
+        f"Вопрос пользователя: {question}"
     )
 
 
@@ -233,6 +280,9 @@ def _policy_metadata(
     generation_elapsed: float,
     total_elapsed: float,
     policy_result: AnswerPolicyResult | None = None,
+    policy_repair_attempted: bool = False,
+    policy_repair_succeeded: bool = False,
+    policy_repair_skipped_reason: str | None = None,
 ) -> dict[str, Any]:
     return {
         "model": config.LLM_MODEL,
@@ -254,6 +304,9 @@ def _policy_metadata(
         "policy_output_violation_match_counts": (
             policy_result.match_counts if policy_result is not None else {}
         ),
+        "policy_output_repair_attempted": policy_repair_attempted,
+        "policy_output_repair_succeeded": policy_repair_succeeded,
+        "policy_output_repair_skipped_reason": policy_repair_skipped_reason,
     }
 
 
@@ -341,6 +394,9 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
     fallback_used = False
     fallback_reason: str | None = None
     policy_result: AnswerPolicyResult | None = None
+    policy_repair_attempted = False
+    policy_repair_succeeded = False
+    policy_repair_skipped_reason: str | None = None
 
     remaining_budget = max(0.0, config.RAG_TOTAL_TIMEOUT_SECONDS - retrieval_elapsed)
     llm_timeout = min(config.LLM_TIMEOUT_SECONDS, remaining_budget)
@@ -365,26 +421,98 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
                     source_allowlist=source_allowlist,
                 )
                 if policy_result.violated:
-                    fallback_used = True
-                    fallback_reason = "policy_output_violation"
-                    answer = SAFE_POLICY_REFUSAL
+                    if _requires_safe_policy_refusal(policy_result):
+                        fallback_used = True
+                        fallback_reason = "policy_output_violation"
+                        policy_repair_skipped_reason = "unsafe_policy_reason"
+                        answer = SAFE_POLICY_REFUSAL
+                    elif _allows_policy_repair(policy_result):
+                        elapsed_after_first_generation = perf_counter() - generation_started
+                        repair_remaining_budget = max(
+                            0.0,
+                            config.RAG_TOTAL_TIMEOUT_SECONDS
+                            - retrieval_elapsed
+                            - elapsed_after_first_generation,
+                        )
+                        repair_timeout = min(config.LLM_TIMEOUT_SECONDS, repair_remaining_budget)
+
+                        if repair_timeout <= 0:
+                            fallback_used = True
+                            fallback_reason = "policy_output_violation"
+                            policy_repair_skipped_reason = "total_budget_exhausted"
+                            answer = build_policy_output_fallback_answer(bounded_documents)
+                        else:
+                            policy_repair_attempted = True
+                            repair_answer = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    invoke_llm,
+                                    _build_repair_question(question),
+                                    bounded_documents,
+                                    conversation_history,
+                                ),
+                                timeout=repair_timeout,
+                            )
+                            repair_answer = repair_answer or build_empty_answer()
+                            repair_policy_result = evaluate_answer_policy(
+                                repair_answer,
+                                source_count=len(sources),
+                                source_allowlist=source_allowlist,
+                            )
+                            policy_result = repair_policy_result
+                            if repair_policy_result.violated:
+                                fallback_used = True
+                                fallback_reason = "policy_output_violation"
+                                policy_repair_skipped_reason = (
+                                    "unsafe_policy_reason"
+                                    if _requires_safe_policy_refusal(repair_policy_result)
+                                    else None
+                                )
+                                answer = (
+                                    SAFE_POLICY_REFUSAL
+                                    if _requires_safe_policy_refusal(repair_policy_result)
+                                    else build_policy_output_fallback_answer(bounded_documents)
+                                )
+                            else:
+                                policy_repair_succeeded = True
+                                answer = repair_answer
+                    else:
+                        fallback_used = True
+                        fallback_reason = "policy_output_violation"
+                        policy_repair_skipped_reason = "unsupported_policy_reason"
+                        answer = build_policy_output_fallback_answer(bounded_documents)
         except asyncio.TimeoutError:
             fallback_used = True
-            fallback_reason = "llm_timeout"
+            fallback_reason = (
+                "policy_output_violation"
+                if policy_result is not None and policy_result.violated
+                else "llm_timeout"
+            )
             logger.error(
                 "LLM call timed out, switching to fallback",
                 extra=log_extra(stage="llm", error_type="TimeoutError"),
             )
-            answer = build_fallback_answer(bounded_documents)
+            answer = (
+                build_policy_output_fallback_answer(bounded_documents)
+                if fallback_reason == "policy_output_violation"
+                else build_fallback_answer(bounded_documents)
+            )
         except Exception as exc:
             fallback_used = True
-            fallback_reason = "llm_unavailable"
+            fallback_reason = (
+                "policy_output_violation"
+                if policy_result is not None and policy_result.violated
+                else "llm_unavailable"
+            )
             logger.error(
                 "LLM call failed, switching to fallback: %s",
                 exc,
                 extra=log_extra(stage="llm", error_type=type(exc).__name__),
             )
-            answer = build_fallback_answer(bounded_documents)
+            answer = (
+                build_policy_output_fallback_answer(bounded_documents)
+                if fallback_reason == "policy_output_violation"
+                else build_fallback_answer(bounded_documents)
+            )
         finally:
             generation_elapsed = perf_counter() - generation_started
 
@@ -398,6 +526,9 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
         generation_elapsed=generation_elapsed,
         total_elapsed=total_elapsed,
         policy_result=policy_result,
+        policy_repair_attempted=policy_repair_attempted,
+        policy_repair_succeeded=policy_repair_succeeded,
+        policy_repair_skipped_reason=policy_repair_skipped_reason,
     )
 
     return RAGResponse(

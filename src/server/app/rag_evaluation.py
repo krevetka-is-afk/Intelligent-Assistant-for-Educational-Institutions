@@ -10,7 +10,7 @@ from time import perf_counter
 from typing import Any
 
 from . import config, rag
-from .prompt_policy import answer_violates_policy, build_source_allowlist
+from .prompt_policy import build_source_allowlist, evaluate_answer_policy
 from .vector import RetrievedDocument, similarity_search
 
 DEFAULT_EVALUATION_CASES_PATH = (
@@ -134,14 +134,20 @@ def capture_rag_evaluation_case(
         else:
             final_answer = answer_fn(case.question, bounded_documents, case.conversation_history)
             sources = rag.deduplicate_sources(bounded_documents)
-            if answer_violates_policy(
+            policy_result = evaluate_answer_policy(
                 final_answer,
                 source_count=len(sources),
                 source_allowlist=build_source_allowlist(sources),
-            ):
+            )
+            if policy_result.violated:
                 fallback_used = True
                 fallback_reason = "policy_output_violation"
-                final_answer = rag.SAFE_POLICY_REFUSAL
+                if rag._requires_safe_policy_refusal(policy_result):
+                    final_answer = rag.SAFE_POLICY_REFUSAL
+                elif rag._allows_policy_repair(policy_result):
+                    final_answer = rag.build_policy_output_fallback_answer(bounded_documents)
+                else:
+                    final_answer = rag.SAFE_POLICY_REFUSAL
     except Exception as exc:
         fallback_used = True
         fallback_reason = f"evaluation_capture_failed:{type(exc).__name__}"
