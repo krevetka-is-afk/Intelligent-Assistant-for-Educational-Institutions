@@ -42,8 +42,12 @@
 | `HF_EMBEDDING_MODEL`               | `server`, `indexer`       | Модель эмбеддингов                                                                                                                                       |
 | `CHROMA_COLLECTION_NAME`           | `server`, `indexer`       | Имя коллекции Chroma                                                                                                                                     |
 | `VECTOR_DB_DIR`                    | `server`, `indexer`       | Директория векторной БД                                                                                                                                  |
+| `LEXICAL_INDEX_PATH`               | `server`, `indexer`       | Путь к SQLite FTS5 индексу; по умолчанию `<VECTOR_DB_DIR>/lexical_index.sqlite3`                                                                         |
 | `DOCUMENTS_DIR`                    | `server`, `indexer`       | Каталог корпуса документов                                                                                                                               |
-| `RAG_TOP_K`                        | `server`                  | Сколько чанков доставать из Chroma                                                                                                                       |
+| `RAG_TOP_K`                        | `server`                  | Сколько финальных чанков передавать модели                                                                                                               |
+| `RAG_CANDIDATE_POOL_SIZE`          | `server`                  | Размер отдельных dense и lexical пулов до RRF                                                                                                            |
+| `RAG_RRF_K`                        | `server`                  | Константа reciprocal-rank fusion                                                                                                                         |
+| `RAG_MAX_CHUNKS_PER_DOCUMENT`      | `server`                  | Максимум чанков одного документа в финальном top-K                                                                                                       |
 | `RAG_MAX_CONTEXT_DOCUMENTS`        | `server`                  | Максимальное число найденных фрагментов, попадающих в prompt                                                                                             |
 | `RAG_MAX_DOCUMENT_CHARS`           | `server`                  | Максимальная длина одного фрагмента в prompt                                                                                                             |
 | `RAG_MAX_TOTAL_CONTEXT_CHARS`      | `server`                  | Общий лимит символов документного контекста в prompt                                                                                                     |
@@ -140,6 +144,16 @@ uv run python -m src.server.app.index_documents \
   --input-dir "$(pwd)/data_and_documents" \
   --persist-dir "$(pwd)/src/server/chrome_langchain_db" \
   --rebuild
+```
+
+Если Chroma уже заполнена, а standalone FTS5-индекс отсутствует или устарел, его можно безопасно
+восстановить без повторного embedding:
+
+```bash
+python -m src.server.app.backfill_lexical \
+  --persist-dir /data \
+  --collection-name "${CHROMA_COLLECTION_NAME:-edu_documents}" \
+  --lexical-index-path "${LEXICAL_INDEX_PATH:-/data/lexical_index.sqlite3}"
 ```
 
 ### 4. Запуск FastAPI
