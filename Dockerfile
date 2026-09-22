@@ -64,17 +64,22 @@ RUN addgroup --gid ${APP_GID} appgroup && \
       --gid ${APP_GID} \
       --home /app appuser
 
+RUN install -d -o appuser -g appgroup -m 0750 /data && \
+    install -d -o appuser -g appgroup -m 0755 /data_and_documents
+
 FROM runtime-base AS server
 
 COPY --from=build --chown=appuser:appgroup /app /app
+RUN chmod 755 /app
 COPY --from=build --chown=appuser:appgroup /_project/src/server /workspace/src/server
-RUN mkdir -p /data_and_documents
 COPY --from=build --chown=appuser:appgroup /_project/app_runtime.py /workspace/app_runtime.py
 RUN chmod -R a+rX /workspace
 
 WORKDIR /workspace
 
 EXPOSE 8000
+
+USER appuser
 
 CMD ["/app/bin/python", "-m", "uvicorn", "src.server.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
@@ -86,6 +91,8 @@ COPY --from=build --chown=appuser:appgroup /_project/app_runtime.py /workspace/a
 RUN chmod -R a+rX /workspace
 
 WORKDIR /workspace
+
+USER appuser
 
 CMD ["/app/bin/python", "-m", "src.bot.bot"]
 
@@ -105,5 +112,7 @@ RUN chmod -R a+rX /workspace
 WORKDIR /workspace
 
 EXPOSE 8501
+
+USER appuser
 
 CMD ["/app/bin/python", "-m", "streamlit", "run", "src/client/app/streamlit_app.py"]

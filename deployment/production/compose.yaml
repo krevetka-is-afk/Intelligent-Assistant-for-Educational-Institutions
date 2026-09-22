@@ -1,13 +1,13 @@
 # Требуются переменные окружения на ВМ (файл .env рядом с compose или CI DOTENV_FILE):
 # POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD, BOT_TOKEN, API_KEY,
 # TELEGRAM_SERVICE_KEY, APP_ENV, LOG_LEVEL, ...
-# Образы подставляет пайплайн: DOCKER_IMAGE_NAME, DOCKER_IMAGE_TAG (commit SHA).
+# Образы подставляет пайплайн: DOCKER_IMAGE_NAME, DOCKER_IMAGE_TAG.
 
 services:
   db:
     image: postgres:16-alpine
     env_file:
-      - .env
+      - ${ENV_FILE:-.env}
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -26,10 +26,10 @@ services:
   server:
     image: ${DOCKER_IMAGE_NAME}:server-${DOCKER_IMAGE_TAG}
     env_file:
-      - .env
+      - ${ENV_FILE:-.env}
     environment:
       PYTHONUNBUFFERED: "1"
-      TELEGRAM_SERVICE_KEY: ${TELEGRAM_SERVICE_KEY}
+      TELEGRAM_SERVICE_KEY: ${TELEGRAM_SERVICE_KEY:?TELEGRAM_SERVICE_KEY must be set}
       VECTOR_DB_DIR: /data
       DOCUMENTS_DIR: /data_and_documents
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
@@ -41,6 +41,13 @@ services:
       - ${DOCUMENTS_HOST_PATH:-./data_and_documents}:/data_and_documents:ro
     tmpfs:
       - /tmp:rw,size=128m
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=${SECCOMP_PROFILE_PATH:?SECCOMP_PROFILE_PATH must be an absolute readable path}
+    cap_drop:
+      - ALL
+    pids_limit: 512
     restart: unless-stopped
     # Хост-порт (часто занят 8000): задайте SERVER_PUBLISH_PORT в .env / CI, напр. 8001
     ports:
@@ -61,10 +68,10 @@ services:
   bot:
     image: ${DOCKER_IMAGE_NAME}:bot-${DOCKER_IMAGE_TAG}
     env_file:
-      - .env
+      - ${ENV_FILE:-.env}
     environment:
       BOT_TOKEN: ${BOT_TOKEN}
-      TELEGRAM_SERVICE_KEY: ${TELEGRAM_SERVICE_KEY}
+      TELEGRAM_SERVICE_KEY: ${TELEGRAM_SERVICE_KEY:?TELEGRAM_SERVICE_KEY must be set}
       API_BASE_URL: http://server:8000
       RAG_API_URL: http://server:8000/telegram/ask
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -76,6 +83,13 @@ services:
         condition: service_healthy
     tmpfs:
       - /tmp:rw,size=64m
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=${SECCOMP_PROFILE_PATH:?SECCOMP_PROFILE_PATH must be an absolute readable path}
+    cap_drop:
+      - ALL
+    pids_limit: 256
     restart: unless-stopped
 
 volumes:
