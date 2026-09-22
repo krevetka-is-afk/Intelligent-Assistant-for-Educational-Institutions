@@ -227,16 +227,31 @@ stdout/stderr контейнеров.
 ## Проверки
 
 ```bash
-PYTHONPATH=. uv run pytest -q
-PYTHONPATH=. uv run ruff check .
-PYTHONPATH=. uv run black --check .
-PYTHONPATH=. uv run isort --check-only .
+uv lock --check
+uv sync --frozen --group dev
+uv run ruff check .
+uv run black --check .
+uv run isort --check-only .
+uv run -m pytest -q -rs -p no:cacheprovider
+uv run -m pytest --cov=src --cov-report=term-missing --cov-fail-under=74 -q
 ```
 
-Полный локальный прогон:
+Для проверки обеих Compose-схем без локальных или действующих секретов CI создаёт временный
+файл с заведомо тестовыми значениями. Локально можно повторить ту же проверку, скопировав
+`.env.example` во временный файл и переопределив только значения production-образов:
 
 ```bash
-./uv-linters.sh
+compose_env="$(mktemp)"
+cp .env.example "$compose_env"
+seccomp_profile_path="$(pwd)/security/seccomp/default.json"
+test -r "$seccomp_profile_path"
+ENV_FILE="$compose_env" DOCKER_IMAGE_NAME=example.invalid/intelligent-assistant \
+  DOCKER_IMAGE_TAG=ci docker compose --env-file "$compose_env" config -q
+ENV_FILE="$compose_env" SECCOMP_PROFILE_PATH="$seccomp_profile_path" \
+  DOCKER_IMAGE_NAME=example.invalid/intelligent-assistant \
+  DOCKER_IMAGE_TAG=ci docker compose --env-file "$compose_env" \
+  -f deployment/production/compose.yaml config -q
+rm -f "$compose_env"
 ```
 
 ## Документация
