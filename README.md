@@ -56,6 +56,10 @@
 | `RAG_SOURCE_SNIPPET_CHARS`         | `server`                  | Максимальная длина возвращаемой цитаты источника, включая многоточие при обрезке                                                                         |
 | `RAG_TOTAL_TIMEOUT_SECONDS`        | `server`                  | Общий бюджет времени RAG                                                                                                                                 |
 | `LLM_TIMEOUT_SECONDS`              | `server`                  | Таймаут вызова LLM                                                                                                                                       |
+| `DOCUMENT_OCR_ENABLED`             | `indexer`                 | Включает OCR fallback для PDF-страниц без извлекаемого текста; по умолчанию выключен                                                                     |
+| `DOCUMENT_OCR_LANG`                | `indexer`                 | Языки Tesseract для OCR, по умолчанию `rus+eng`                                                                                                          |
+| `DOCUMENT_OCR_MAX_PAGES`           | `indexer`                 | Максимум OCR-кандидатов PDF на файл; страницы с обычным `extract_text` в лимит не входят                                                                 |
+| `DOCUMENT_OCR_TIMEOUT_SECONDS`     | `indexer`                 | Общий тайм-бюджет OCR на один PDF                                                                                                                        |
 | `CONVERSATION_MEMORY_WINDOW`       | `server`                  | Размер окна памяти последних сообщений пользователя (по умолчанию `5`)                                                                                   |
 | `CONVERSATION_MEMORY_TTL_SECONDS`  | `server`                  | TTL контекста диалога в секундах (по умолчанию `3600`)                                                                                                   |
 | `CONVERSATION_MEMORY_MAX_SESSIONS` | `server`                  | Ограничение на число активных сессий контекста                                                                                                           |
@@ -144,6 +148,46 @@ uv run python -m src.server.app.index_documents \
   --input-dir "$(pwd)/data_and_documents" \
   --persist-dir "$(pwd)/src/server/chrome_langchain_db" \
   --rebuild
+```
+
+Для аудита корпуса без записи в Chroma/FTS и без embedding:
+
+```bash
+uv run python -m src.server.app.index_documents \
+  --input-dir "$(pwd)/data_and_documents" \
+  --persist-dir "$(pwd)/src/server/chrome_langchain_db" \
+  --audit-only \
+  --report-json .omx/reports/ingestion-audit.json
+```
+
+Опциональный OCR требует системные бинарные зависимости: Tesseract и Poppler `pdftoppm`.
+В Docker они ставятся через `Dockerfile`; на macOS для локального прогона:
+
+```bash
+brew install tesseract tesseract-lang poppler
+```
+
+OCR выключен по умолчанию и включается явно. Он сохраняет обычный `extract_text` для текстовых
+страниц PDF и запускает OCR только для страниц без извлекаемого текста:
+
+```bash
+uv run python -m src.server.app.index_documents \
+  --input-dir "$(pwd)/data_and_documents" \
+  --persist-dir "$(pwd)/src/server/chrome_langchain_db" \
+  --audit-only \
+  --enable-ocr \
+  --report-json .omx/reports/ingestion-audit-ocr.json
+```
+
+После проверки audit-отчёта тот же режим можно запустить для полного обновления индекса:
+
+```bash
+uv run python -m src.server.app.index_documents \
+  --input-dir "$(pwd)/data_and_documents" \
+  --persist-dir "$(pwd)/src/server/chrome_langchain_db" \
+  --rebuild \
+  --enable-ocr \
+  --report-json .omx/reports/ingestion-full-ocr.json
 ```
 
 Если Chroma уже заполнена, а standalone FTS5-индекс отсутствует или устарел, его можно безопасно
