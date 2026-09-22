@@ -8,6 +8,13 @@ from langchain_core.documents import Document
 
 from src.server.app import rag
 from src.server.app.prompt_policy import PROMPT_POLICY_VERSION, SAFE_POLICY_REFUSAL, PromptCompiler
+from src.server.app.rag_evaluation import (
+    DEFAULT_EVALUATION_CASES_PATH,
+    RAGEvaluationCase,
+    capture_rag_evaluation_case,
+    load_evaluation_cases,
+    write_capture_report,
+)
 from src.server.app.vector import RetrievedDocument
 
 
@@ -459,3 +466,165 @@ def test_ask_question_uses_conversation_history_in_retrieval_query(monkeypatch):
     assert observed["query"] == (
         "У меня пересдача\nКакие документы нужны?\nИ куда нести?\nА что по дедлайну?"
     )
+
+
+def test_rag_evaluation_cases_cover_required_question_matrix():
+    cases = load_evaluation_cases()
+    case_ids = {case.id for case in cases}
+
+    assert DEFAULT_EVALUATION_CASES_PATH.exists()
+    assert {
+        "disciplinary-actions-clean-core",
+        "disciplinary-actions-clean-short",
+        "disciplinary-actions-polluted-retake-history",
+        "retake-periods-clean-core",
+        "retake-periods-clean-short",
+        "retake-periods-clean-rephrased",
+        "retake-periods-polluted-discipline-history",
+        "retake-periods-polluted-discipline-history-short",
+    } <= case_ids
+
+    for case in cases:
+        assert case.question
+        assert case.expected_documents
+        assert case.forbidden_clusters
+        assert case.minimum_answer_points
+
+    retake_cases = [case for case in cases if case.id.startswith("retake-periods")]
+    assert retake_cases
+    assert all(case.allow_no_calendar_dates_statement for case in retake_cases)
+    assert any(case.conversation_history for case in retake_cases)
+    assert any(not case.conversation_history for case in retake_cases)
+
+
+def test_capture_rag_evaluation_case_records_retrieval_baseline_without_llm():
+    case = RAGEvaluationCase(
+        id="retake-periods-polluted-discipline-history",
+        question="Когда периоды пересдач в ВШЭ?",
+        conversation_history=[
+            "За какие действия можно получить дисциплинарное взыскание?",
+            "Какие бывают взыскания?",
+            "Расскажи про правила внутреннего распорядка.",
+        ],
+        expected_documents=["Памятка студенту о первой пересдаче"],
+        forbidden_clusters=["Правила внутреннего распорядка"],
+        minimum_answer_points=["различает первую и вторую пересдачу"],
+        allow_no_calendar_dates_statement=True,
+    )
+    docs = [
+        RetrievedDocument(
+            document=Document(
+                page_content="Период первой пересдачи определяется учебным офисом.",
+                metadata={
+                    "source": (
+                        "data_and_documents/student_handbook/basic/"
+                        "Памятка студенту о первой пересдаче.docx"
+                    ),
+                    "title": "Памятка студенту о первой пересдаче",
+                    "document_id": "student_handbook/basic/retake-first",
+                    "chunk_index": 0,
+                },
+            ),
+            distance=0.11,
+        ),
+        RetrievedDocument(
+            document=Document(
+                page_content="Дисциплинарные взыскания регулируются правилами.",
+                metadata={
+                    "source": "data_and_documents/from_parsers/Правила внутреннего распорядка.docx",
+                    "title": "Правила внутреннего распорядка",
+                    "document_id": "discipline/rules",
+                    "chunk_index": 1,
+                },
+            ),
+            distance=0.22,
+        ),
+    ]
+    observed: dict[str, object] = {}
+
+    def _search(query: str, *, k: int) -> list[RetrievedDocument]:
+        observed["query"] = query
+        observed["top_n"] = k
+        return docs
+
+    capture = capture_rag_evaluation_case(case, search_fn=_search, top_n=5)
+
+    assert observed == {
+        "query": (
+            "За какие действия можно получить дисциплинарное взыскание?\n"
+            "Какие бывают взыскания?\n"
+            "Расскажи про правила внутреннего распорядка.\n"
+            "Когда периоды пересдач в ВШЭ?"
+        ),
+        "top_n": 5,
+    }
+    assert capture.case_id == case.id
+    assert capture.top_n == 5
+    assert capture.expected_document_ranks == {"Памятка студенту о первой пересдаче": 1}
+    assert capture.candidates[0].expected_document_matches == [
+        "Памятка студенту о первой пересдаче"
+    ]
+    assert capture.candidates[1].forbidden_cluster_matches == ["Правила внутреннего распорядка"]
+    assert capture.fallback_used is True
+    assert capture.fallback_reason == "evaluation_answer_generator_not_configured"
+    assert capture.final_answer.startswith("LLM временно недоступна")
+    assert capture.retrieval_time_ms >= 0
+    assert capture.total_time_ms >= 0
+
+
+def test_capture_rag_evaluation_case_records_answer_policy_fallback():
+    case = RAGEvaluationCase(
+        id="disciplinary-actions-clean-core",
+        question="За какие конкретные действия можно получить дисциплинарное взыскание в ВШЭ?",
+        conversation_history=[],
+        expected_documents=["Правила внутреннего распорядка"],
+        forbidden_clusters=["пересдач"],
+        minimum_answer_points=["перечисляет конкретные нарушения"],
+        allow_no_calendar_dates_statement=False,
+    )
+    docs = [
+        RetrievedDocument(
+            document=Document(
+                page_content="В документе перечислены основания дисциплинарных взысканий.",
+                metadata={
+                    "source": "rules.docx",
+                    "title": "Правила внутреннего распорядка",
+                    "chunk_index": 0,
+                },
+            ),
+            distance=0.2,
+        )
+    ]
+
+    capture = capture_rag_evaluation_case(
+        case,
+        search_fn=lambda query, *, k: docs,
+        answer_fn=lambda question, retrieved_documents, history: "Ответ с неподтвержденным [99].",
+    )
+
+    assert capture.fallback_used is True
+    assert capture.fallback_reason == "policy_output_violation"
+    assert capture.final_answer == SAFE_POLICY_REFUSAL
+
+
+def test_write_capture_report_includes_baseline_metadata(tmp_path):
+    case = RAGEvaluationCase(
+        id="retake-periods-clean-core",
+        question="Когда периоды пересдач в ВШЭ?",
+        conversation_history=[],
+        expected_documents=["Памятка студенту о первой пересдаче"],
+        forbidden_clusters=["дисциплинар"],
+        minimum_answer_points=["отвечает о пересдачах"],
+        allow_no_calendar_dates_statement=True,
+    )
+    capture = capture_rag_evaluation_case(case, search_fn=lambda query, *, k: [])
+    report_path = tmp_path / "baseline.json"
+
+    write_capture_report(report_path, [capture])
+
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 1
+    assert payload["captured_at"]
+    assert payload["baseline_top_n"] == 5
+    assert payload["captures"][0]["case_id"] == case.id
+    assert payload["captures"][0]["fallback_reason"] == "evaluation_answer_generator_not_configured"
