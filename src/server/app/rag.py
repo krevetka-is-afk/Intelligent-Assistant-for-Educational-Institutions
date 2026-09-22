@@ -15,11 +15,13 @@ from . import config
 from .prompt_policy import (
     PROMPT_POLICY_VERSION,
     SAFE_POLICY_REFUSAL,
+    AnswerPolicyAudit,
+    AnswerPolicyResult,
     CompiledPrompt,
     PromptCompiler,
     PromptPolicyViolation,
-    answer_violates_policy,
     build_source_allowlist,
+    evaluate_answer_policy,
 )
 from .vector import RetrievedDocument, similarity_search
 
@@ -51,6 +53,7 @@ class RAGResponse:
     sources: list[dict[str, Any]]
     metadata: dict[str, Any]
     retrieved_documents: list[RetrievedDocument]
+    policy_audit: AnswerPolicyAudit | None = None
 
 
 def _get_llm_chain():
@@ -229,6 +232,7 @@ def _policy_metadata(
     retrieval_elapsed: float,
     generation_elapsed: float,
     total_elapsed: float,
+    policy_result: AnswerPolicyResult | None = None,
 ) -> dict[str, Any]:
     return {
         "model": config.LLM_MODEL,
@@ -241,6 +245,15 @@ def _policy_metadata(
         "retrieval_time_ms": round(retrieval_elapsed * 1000),
         "generation_time_ms": round(generation_elapsed * 1000),
         "total_time_ms": round(total_elapsed * 1000),
+        "policy_output_violation_reason": (
+            policy_result.primary_reason if policy_result is not None else None
+        ),
+        "policy_output_violation_reasons": (
+            list(policy_result.reasons) if policy_result is not None else []
+        ),
+        "policy_output_violation_match_counts": (
+            policy_result.match_counts if policy_result is not None else {}
+        ),
     }
 
 
@@ -327,6 +340,7 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
     generation_elapsed = 0.0
     fallback_used = False
     fallback_reason: str | None = None
+    policy_result: AnswerPolicyResult | None = None
 
     remaining_budget = max(0.0, config.RAG_TOTAL_TIMEOUT_SECONDS - retrieval_elapsed)
     llm_timeout = min(config.LLM_TIMEOUT_SECONDS, remaining_budget)
@@ -344,18 +358,16 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
             )
             if not answer:
                 answer = build_empty_answer()
-            elif answer_violates_policy(
-                answer,
-                source_count=len(sources),
-                source_allowlist=source_allowlist,
-            ):
-                fallback_used = True
-                fallback_reason = "policy_output_violation"
-                logger.warning(
-                    "LLM response rejected by prompt policy",
-                    extra=log_extra(stage="policy", error_type=fallback_reason),
+            else:
+                policy_result = evaluate_answer_policy(
+                    answer,
+                    source_count=len(sources),
+                    source_allowlist=source_allowlist,
                 )
-                answer = SAFE_POLICY_REFUSAL
+                if policy_result.violated:
+                    fallback_used = True
+                    fallback_reason = "policy_output_violation"
+                    answer = SAFE_POLICY_REFUSAL
         except asyncio.TimeoutError:
             fallback_used = True
             fallback_reason = "llm_timeout"
@@ -385,6 +397,7 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
         retrieval_elapsed=retrieval_elapsed,
         generation_elapsed=generation_elapsed,
         total_elapsed=total_elapsed,
+        policy_result=policy_result,
     )
 
     return RAGResponse(
@@ -392,4 +405,5 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
         sources=sources,
         metadata=metadata,
         retrieved_documents=bounded_documents,
+        policy_audit=policy_result.audit if policy_result is not None else None,
     )
