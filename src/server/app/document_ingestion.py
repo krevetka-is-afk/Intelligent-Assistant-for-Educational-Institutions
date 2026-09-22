@@ -15,7 +15,7 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from pypdf import PdfReader
 
-from . import config
+from . import config, lexical
 from .vector import get_embedding_function
 
 logger = logging.getLogger("server.indexing")
@@ -424,6 +424,7 @@ def index_directory(
     rebuild: bool = False,
     chunk_size: int | None = None,
     overlap: int | None = None,
+    lexical_index_path: Path | None = None,
 ) -> IndexingSummary:
     config.validate_chunk_settings()
     collection = collection_name or config.CHROMA_COLLECTION_NAME
@@ -435,6 +436,11 @@ def index_directory(
 
     persist_directory.mkdir(parents=True, exist_ok=True)
     vector_store = create_vector_store(persist_directory, collection, rebuild=rebuild)
+    resolved_lexical_index_path = lexical.resolve_lexical_index_path(
+        persist_directory=persist_directory,
+        lexical_index_path=lexical_index_path,
+    )
+    lexical.initialize_lexical_index(resolved_lexical_index_path, rebuild=rebuild)
     summary = IndexingSummary()
     indexed_at = datetime.now(UTC).isoformat()
     indexed_paths = _iter_supported_files(input_dir)
@@ -458,11 +464,24 @@ def index_directory(
                 logger.warning("Skipping %s because it produced no chunks", path)
                 continue
 
-            _delete_document_chunks(vector_store, parsed_document.document_id)
-            vector_store.add_documents(
-                documents=[record.to_document() for record in chunk_records],
-                ids=[record.id for record in chunk_records],
-            )
+            try:
+                _delete_document_chunks(vector_store, parsed_document.document_id)
+                vector_store.add_documents(
+                    documents=[record.to_document() for record in chunk_records],
+                    ids=[record.id for record in chunk_records],
+                )
+                lexical.replace_document_chunks(
+                    resolved_lexical_index_path,
+                    parsed_document.document_id,
+                    chunk_records,
+                )
+            except Exception:
+                _delete_document_chunks(vector_store, parsed_document.document_id)
+                lexical.delete_document_chunks(
+                    resolved_lexical_index_path,
+                    parsed_document.document_id,
+                )
+                raise
             summary.indexed_files += 1
             summary.chunks_written += len(chunk_records)
         except DocumentParsingError:
@@ -475,10 +494,19 @@ def index_directory(
     stale_document_ids = _delete_stale_document_chunks(
         vector_store, active_document_ids=active_document_ids
     )
+    stale_lexical_document_ids = lexical.delete_stale_documents(
+        resolved_lexical_index_path,
+        active_document_ids=active_document_ids,
+    )
     if stale_document_ids:
         logger.info(
             "Removed stale indexed documents: count=%s",
             len(stale_document_ids),
+        )
+    if stale_lexical_document_ids:
+        logger.info(
+            "Removed stale lexical documents: count=%s",
+            len(stale_lexical_document_ids),
         )
 
     return summary
