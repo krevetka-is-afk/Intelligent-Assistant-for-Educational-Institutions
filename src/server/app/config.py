@@ -45,6 +45,16 @@ def _get_nonempty_env(name: str) -> str | None:
     return normalized or None
 
 
+def _get_optional_int_env(name: str) -> int | None:
+    value = _get_nonempty_env(name)
+    return int(value) if value is not None else None
+
+
+def _get_optional_float_env(name: str) -> float | None:
+    value = _get_nonempty_env(name)
+    return float(value) if value is not None else None
+
+
 def _get_choice_env(name: str, default: str, allowed: set[str]) -> str:
     raw = _get_nonempty_env(name)
     normalized = (raw or default).strip().casefold()
@@ -151,6 +161,8 @@ HF_EMBEDDING_MODEL = (
 )
 HF_EMBEDDING_NORMALIZE = _get_bool_env("HF_EMBEDDING_NORMALIZE", False)
 LLM_MODEL = getenv("LLM_MODEL", "qwen2.5:3b") or "qwen2.5:3b"
+RAG_OFFLINE_GENERATION_SEED = _get_optional_int_env("RAG_OFFLINE_GENERATION_SEED")
+RAG_OFFLINE_GENERATION_TEMPERATURE = _get_optional_float_env("RAG_OFFLINE_GENERATION_TEMPERATURE")
 RAG_QUERY_REWRITE_MODEL = getenv("RAG_QUERY_REWRITE_MODEL", LLM_MODEL) or LLM_MODEL
 RAG_TOP_K = int(getenv("RAG_TOP_K", "4") or "4")
 RAG_MAX_CONTEXT_DOCUMENTS = int(
@@ -183,6 +195,29 @@ RAG_CANDIDATE_POOL_SIZE = int(
 )
 RAG_RRF_K = int(getenv("RAG_RRF_K", "60") or "60")
 RAG_MAX_CHUNKS_PER_DOCUMENT = int(getenv("RAG_MAX_CHUNKS_PER_DOCUMENT", "2") or "2")
+RAG_EVIDENCE_RERANK_ENABLED = _get_bool_env("RAG_EVIDENCE_RERANK_ENABLED", False)
+RAG_EVIDENCE_STRUCTURAL_WINDOW_ENABLED = _get_bool_env(
+    "RAG_EVIDENCE_STRUCTURAL_WINDOW_ENABLED", False
+)
+RAG_EVIDENCE_SUFFICIENCY_ENABLED = _get_bool_env("RAG_EVIDENCE_SUFFICIENCY_ENABLED", False)
+RAG_EVIDENCE_RETRY_ENABLED = _get_bool_env("RAG_EVIDENCE_RETRY_ENABLED", False)
+RAG_EVIDENCE_MARKER_REPAIR_ENABLED = _get_bool_env("RAG_EVIDENCE_MARKER_REPAIR_ENABLED", False)
+RAG_EVIDENCE_OFFLINE_CAPTURE_ENABLED = _get_bool_env("RAG_EVIDENCE_OFFLINE_CAPTURE_ENABLED", False)
+RAG_EVIDENCE_CANDIDATE_TOP_K = int(getenv("RAG_EVIDENCE_CANDIDATE_TOP_K", "16") or "16")
+RAG_EVIDENCE_FINAL_TOP_K = int(getenv("RAG_EVIDENCE_FINAL_TOP_K", "4") or "4")
+RAG_EVIDENCE_RERANK_METHOD = _get_choice_env(
+    "RAG_EVIDENCE_RERANK_METHOD",
+    "heuristic",
+    {"heuristic", "cross_encoder"},
+)
+RAG_EVIDENCE_JUDGE_MODEL = _get_choice_env(
+    "RAG_EVIDENCE_JUDGE_MODEL",
+    "qwen2.5:3b",
+    {"qwen2.5:3b", "qwen3:8b"},
+)
+RAG_EVIDENCE_JUDGE_TIMEOUT_SECONDS = float(
+    getenv("RAG_EVIDENCE_JUDGE_TIMEOUT_SECONDS", "30") or "30"
+)
 LLM_TIMEOUT_SECONDS = float(getenv("LLM_TIMEOUT_SECONDS", "360") or "360")
 CONVERSATION_MEMORY_WINDOW = int(getenv("CONVERSATION_MEMORY_WINDOW", "5") or "5")
 CONVERSATION_MEMORY_TTL_SECONDS = float(getenv("CONVERSATION_MEMORY_TTL_SECONDS", "3600") or "3600")
@@ -223,6 +258,8 @@ def validate_rag_policy_settings() -> None:
         "RAG_CANDIDATE_POOL_SIZE": RAG_CANDIDATE_POOL_SIZE,
         "RAG_RRF_K": RAG_RRF_K,
         "RAG_MAX_CHUNKS_PER_DOCUMENT": RAG_MAX_CHUNKS_PER_DOCUMENT,
+        "RAG_EVIDENCE_CANDIDATE_TOP_K": RAG_EVIDENCE_CANDIDATE_TOP_K,
+        "RAG_EVIDENCE_FINAL_TOP_K": RAG_EVIDENCE_FINAL_TOP_K,
         "DOCUMENT_OCR_MAX_PAGES": DOCUMENT_OCR_MAX_PAGES,
     }
     for name, value in positive_settings.items():
@@ -230,8 +267,15 @@ def validate_rag_policy_settings() -> None:
             raise ValueError(f"{name} must be positive")
     if RAG_CANDIDATE_POOL_SIZE < RAG_TOP_K:
         raise ValueError("RAG_CANDIDATE_POOL_SIZE must be greater than or equal to RAG_TOP_K")
+    if RAG_EVIDENCE_CANDIDATE_TOP_K < RAG_EVIDENCE_FINAL_TOP_K:
+        raise ValueError(
+            "RAG_EVIDENCE_CANDIDATE_TOP_K must be greater than or equal to "
+            "RAG_EVIDENCE_FINAL_TOP_K"
+        )
     if DOCUMENT_OCR_TIMEOUT_SECONDS <= 0:
         raise ValueError("DOCUMENT_OCR_TIMEOUT_SECONDS must be positive")
+    if RAG_EVIDENCE_JUDGE_TIMEOUT_SECONDS <= 0:
+        raise ValueError("RAG_EVIDENCE_JUDGE_TIMEOUT_SECONDS must be positive")
 
 
 def validate_runtime_config() -> None:

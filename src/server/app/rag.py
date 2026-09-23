@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from time import perf_counter
 from typing import Any
 
@@ -25,7 +26,16 @@ from .prompt_policy import (
     PromptPolicyViolation,
     build_source_allowlist,
     evaluate_answer_policy,
+    sanitize_known_control_marker_artifacts,
 )
+from .rag_evidence_judge import (
+    assess_evidence_sufficiency,
+    invoke_answer_judge,
+    unknown_answer_judge,
+)
+from .rag_evidence_models import EvidenceAnswerJudgeResult
+from .rag_evidence_rerank import rerank_evidence_candidates
+from .rag_evidence_windows import build_structural_windows
 from .vector import RetrievedDocument, get_chunks_by_ids, similarity_search
 
 _search_lexical: Callable[..., Any] | None
@@ -73,8 +83,31 @@ _REPAIRABLE_ANSWER_POLICY_REASONS: frozenset[AnswerPolicyReason] = frozenset(
         "unverified_labeled_source",
         "unverified_url",
         "unverified_filename",
+        "known_control_marker_artifact",
     }
 )
+
+
+def heuristic_answer_judge(**kwargs: Any) -> tuple[EvidenceAnswerJudgeResult, dict[str, object]]:
+    return invoke_answer_judge(**kwargs)
+
+
+def _coerce_answer_judge_output(
+    output: Any,
+) -> tuple[EvidenceAnswerJudgeResult, dict[str, object]]:
+    if isinstance(output, tuple) and len(output) == 2:
+        result, diagnostics = output
+        if isinstance(result, EvidenceAnswerJudgeResult) and isinstance(diagnostics, dict):
+            return result, diagnostics
+    if isinstance(output, EvidenceAnswerJudgeResult):
+        return output, {
+            "enabled": True,
+            "verdict": output.verdict,
+            "evidence_ids": output.evidence_ids,
+            "reason_code": output.reason,
+            "missing_aspect_count": len(output.missing_aspects),
+        }
+    return unknown_answer_judge("invalid_judge_output")
 
 
 @dataclass(slots=True)
@@ -96,7 +129,15 @@ def _get_llm_chain():
                 ("user", "{user_message}"),
             ]
         )
-        model = OllamaLLM(model=config.LLM_MODEL, base_url=config.OLLAMA_HOST)
+        model_kwargs: dict[str, Any] = {
+            "model": config.LLM_MODEL,
+            "base_url": config.OLLAMA_HOST,
+        }
+        if config.RAG_OFFLINE_GENERATION_SEED is not None:
+            model_kwargs["seed"] = config.RAG_OFFLINE_GENERATION_SEED
+        if config.RAG_OFFLINE_GENERATION_TEMPERATURE is not None:
+            model_kwargs["temperature"] = config.RAG_OFFLINE_GENERATION_TEMPERATURE
+        model = OllamaLLM(**model_kwargs)
         _llm_chain = prompt | model
     return _llm_chain
 
@@ -780,8 +821,12 @@ def retrieve_documents(
     dict[str, Any],
 ]:
     top_k = k or config.RAG_TOP_K
+    evidence_rerank_enabled = bool(getattr(config, "RAG_EVIDENCE_RERANK_ENABLED", False))
+    evidence_candidate_top_k = _get_positive_int_config("RAG_EVIDENCE_CANDIDATE_TOP_K", 16)
+    evidence_final_top_k = _get_positive_int_config("RAG_EVIDENCE_FINAL_TOP_K", top_k)
+    ranking_top_k = max(top_k, evidence_candidate_top_k) if evidence_rerank_enabled else top_k
     candidate_pool_size = max(
-        top_k,
+        ranking_top_k,
         _get_positive_int_config("RAG_CANDIDATE_POOL_SIZE", max(top_k * 4, top_k)),
     )
     rrf_k = _get_positive_int_config("RAG_RRF_K", 60)
@@ -844,10 +889,34 @@ def retrieve_documents(
         lexical_documents=lexical_documents,
         dense_rewrite_documents=expanded_dense_documents,
         lexical_rewrite_documents=expanded_lexical_documents,
-        top_k=top_k,
+        top_k=ranking_top_k,
         rrf_k=rrf_k,
         max_chunks_per_document=max_chunks_per_document,
     )
+    candidate_top_documents = retrieved_documents[:evidence_candidate_top_k]
+    diagnostics["top16"] = [dict(item._retrieval_diagnostics) for item in candidate_top_documents]
+    if evidence_rerank_enabled:
+        diagnostics["_candidate_top16_documents_internal"] = list(candidate_top_documents)
+        if getattr(config, "RAG_EVIDENCE_OFFLINE_CAPTURE_ENABLED", False):
+            top16_payload = _documents_payload(candidate_top_documents)
+            diagnostics["top16_documents"] = top16_payload
+            diagnostics["candidate_top16_documents"] = top16_payload
+            diagnostics["rrf_top16_documents"] = top16_payload
+        try:
+            rerank_result = rerank_evidence_candidates(
+                question=question,
+                candidates=retrieved_documents[:evidence_candidate_top_k],
+                final_k=min(top_k, evidence_final_top_k),
+            )
+            retrieved_documents = rerank_result.selected_documents
+            diagnostics["evidence_rerank"] = rerank_result.diagnostics
+        except Exception as exc:
+            diagnostics["evidence_rerank"] = {
+                "enabled": True,
+                "fallback": "rrf_top_k",
+                "error_type": type(exc).__name__,
+            }
+            retrieved_documents = retrieved_documents[:top_k]
     if primary_dense_mode:
         strategy = "primary_dense_ranker"
     else:
@@ -869,6 +938,9 @@ def retrieve_documents(
         "retrieval_expanded_search_failed": expanded_search_failed,
         "retrieval_expanded_search_error_type": expanded_search_error_type,
         "retrieval_expanded_search_error_stage": expanded_search_error_stage,
+        "rag_evidence_rerank_enabled": evidence_rerank_enabled,
+        "rag_evidence_candidate_top_k": evidence_candidate_top_k,
+        "rag_evidence_final_top_k": evidence_final_top_k,
     }
     diagnostics.update(
         {
@@ -981,6 +1053,35 @@ def _allows_policy_repair(policy_result: AnswerPolicyResult) -> bool:
     return bool(reasons) and reasons <= _REPAIRABLE_ANSWER_POLICY_REASONS
 
 
+def _try_sanitize_known_control_marker(
+    answer: str,
+    *,
+    source_count: int,
+    source_allowlist: set[str],
+) -> tuple[str, AnswerPolicyResult, dict[str, Any]]:
+    sanitization = sanitize_known_control_marker_artifacts(answer)
+    diagnostics = {
+        "attempted": True,
+        "changed": sanitization.changed,
+        "skipped_reason": sanitization.skipped_reason,
+    }
+    if not sanitization.changed:
+        policy_result = evaluate_answer_policy(
+            answer,
+            source_count=source_count,
+            source_allowlist=source_allowlist,
+        )
+        return answer, policy_result, diagnostics
+
+    policy_result = evaluate_answer_policy(
+        sanitization.sanitized_answer,
+        source_count=source_count,
+        source_allowlist=source_allowlist,
+    )
+    diagnostics["succeeded"] = not policy_result.violated
+    return sanitization.sanitized_answer, policy_result, diagnostics
+
+
 def _build_repair_question(question: str) -> str:
     return (
         "Повтори ответ на вопрос пользователя, используя только переданные найденные "
@@ -989,6 +1090,235 @@ def _build_repair_question(question: str) -> str:
         "[1], [2] и так далее.\n\n"
         f"Вопрос пользователя: {question}"
     )
+
+
+def _build_evidence_retry_question(question: str, missing_aspects: list[str]) -> str:
+    missing = ", ".join(missing_aspects[:6]) if missing_aspects else "неполные аспекты ответа"
+    return (
+        "Повтори ответ на вопрос пользователя. Используй только переданные найденные "
+        "документы и явно не добавляй сведения, которых нет в контексте. Уточни или "
+        f"исправь неполные части: {missing}.\n\n"
+        f"Вопрос пользователя: {question}"
+    )
+
+
+_EVIDENCE_TERM_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁё]{3,}")
+_RAW_DIAGNOSTIC_KEYS = {
+    "actual_prompt_documents",
+    "final_top4",
+    "top16_documents",
+    "candidate_top16_documents",
+    "rrf_top16_documents",
+    "initial_actual_prompt_documents",
+    "initial_final_top4",
+    "retry_actual_prompt_documents",
+    "retry_final_top4",
+    "evidence_answer_judge_private",
+}
+
+
+def _evidence_terms(values: list[str] | tuple[str, ...] | set[str] | str | None) -> set[str]:
+    if values is None:
+        return set()
+    if isinstance(values, str):
+        text = values
+    else:
+        text = " ".join(str(value) for value in values)
+    return {match.group(0).casefold() for match in _EVIDENCE_TERM_RE.finditer(text)}
+
+
+def _chunk_identifier(retrieved: RetrievedDocument) -> str:
+    metadata = retrieved.document.metadata if isinstance(retrieved.document.metadata, dict) else {}
+    chunk_id = metadata.get("chunk_id") or metadata.get("evidence_window_anchor_chunk_id")
+    if chunk_id is not None:
+        return str(chunk_id)
+    return "|".join(
+        str(metadata.get(key) or "")
+        for key in ("document_id", "page", "chunk_index", "char_start", "char_end")
+    )
+
+
+def _candidate_top16_documents(
+    retrieval_diagnostics: dict[str, Any],
+    fallback_documents: list[RetrievedDocument],
+) -> list[RetrievedDocument]:
+    value = retrieval_diagnostics.get("_candidate_top16_documents_internal")
+    if isinstance(value, list) and all(isinstance(item, RetrievedDocument) for item in value):
+        return list(value)
+    return list(fallback_documents)
+
+
+def _compile_evidence_documents(
+    *,
+    question: str,
+    selected_documents: list[RetrievedDocument],
+    conversation_history: list[str] | None,
+    structural_windows_enabled: bool,
+) -> tuple[list[RetrievedDocument], list[RetrievedDocument], dict[str, Any] | None]:
+    if structural_windows_enabled:
+        window_result = build_structural_windows(selected_documents, question=question)
+        compiled_prompt = _prompt_compiler.compile(
+            question=question,
+            retrieved_documents=window_result.prompt_documents,
+            conversation_history=conversation_history,
+        )
+        bounded = _attach_retrieval_diagnostics(
+            list(compiled_prompt.retrieved_documents),
+            window_result.prompt_documents,
+        )
+        return bounded, bounded, window_result.diagnostics
+
+    compiled_prompt = _prompt_compiler.compile(
+        question=question,
+        retrieved_documents=selected_documents,
+        conversation_history=conversation_history,
+    )
+    bounded = _attach_retrieval_diagnostics(
+        list(compiled_prompt.retrieved_documents),
+        selected_documents,
+    )
+    return bounded, bounded, None
+
+
+def _select_alternate_evidence_documents(
+    *,
+    question: str,
+    missing_aspects: list[str],
+    current_documents: list[RetrievedDocument],
+    retrieval_diagnostics: dict[str, Any],
+    conversation_history: list[str] | None,
+    structural_windows_enabled: bool,
+) -> tuple[list[RetrievedDocument], list[RetrievedDocument], dict[str, Any]]:
+    candidates = _candidate_top16_documents(retrieval_diagnostics, current_documents)
+    current_ids = {_chunk_identifier(item) for item in current_documents}
+    aspect_terms = _evidence_terms(missing_aspects)
+    question_terms = _evidence_terms(question)
+    scoring_terms = aspect_terms or question_terms
+    if not candidates or not scoring_terms:
+        return (
+            current_documents,
+            current_documents,
+            {
+                "status": "unchanged",
+                "reason": "no_alternate_terms",
+                "candidate_count": len(candidates),
+            },
+        )
+
+    scored: list[tuple[int, int, int, RetrievedDocument]] = []
+    for index, candidate in enumerate(candidates):
+        text_terms = _evidence_terms(str(candidate.document.page_content or ""))
+        missing_overlap = len(aspect_terms & text_terms) if aspect_terms else 0
+        query_overlap = len(question_terms & text_terms) if question_terms else 0
+        is_current = int(_chunk_identifier(candidate) in current_ids)
+        scored.append((missing_overlap, query_overlap, -is_current, candidate))
+
+    ordered = [item[3] for item in sorted(scored, key=lambda item: item[:3], reverse=True)]
+    selected: list[RetrievedDocument] = []
+    seen: set[str] = set()
+    max_documents = min(
+        _get_positive_int_config("RAG_EVIDENCE_FINAL_TOP_K", config.RAG_TOP_K),
+        max(1, config.RAG_TOP_K),
+    )
+    for candidate in ordered:
+        identifier = _chunk_identifier(candidate)
+        if identifier in seen:
+            continue
+        selected.append(candidate)
+        seen.add(identifier)
+        if len(selected) >= max_documents:
+            break
+
+    selected_ids = {_chunk_identifier(item) for item in selected}
+    changed = selected_ids != current_ids and bool(selected_ids - current_ids)
+    if not changed:
+        return (
+            current_documents,
+            current_documents,
+            {
+                "status": "unchanged",
+                "reason": "no_different_evidence",
+                "candidate_count": len(candidates),
+                "selected_ids": sorted(selected_ids),
+            },
+        )
+
+    augmented_question = question
+    if missing_aspects:
+        augmented_question = question + "\n" + "\n".join(missing_aspects[:6])
+    bounded, generation, window_diagnostics = _compile_evidence_documents(
+        question=augmented_question,
+        selected_documents=selected,
+        conversation_history=conversation_history,
+        structural_windows_enabled=structural_windows_enabled,
+    )
+    diagnostics: dict[str, Any] = {
+        "status": "reselected",
+        "candidate_count": len(candidates),
+        "selected_ids": [_chunk_identifier(item) for item in selected],
+        "previous_ids": sorted(current_ids),
+        "missing_aspect_count": len(missing_aspects),
+    }
+    if window_diagnostics is not None:
+        diagnostics["structural_windows"] = window_diagnostics
+    return bounded, generation, diagnostics
+
+
+def _maybe_store_raw_diagnostics(
+    retrieval_diagnostics: dict[str, Any],
+    key: str,
+    value: Any,
+) -> None:
+    if getattr(config, "RAG_EVIDENCE_OFFLINE_CAPTURE_ENABLED", False):
+        retrieval_diagnostics[key] = value
+
+
+def _store_final_context_diagnostics(
+    retrieval_diagnostics: dict[str, Any],
+    *,
+    generation_documents: list[RetrievedDocument],
+    bounded_documents: list[RetrievedDocument],
+) -> None:
+    _maybe_store_raw_diagnostics(
+        retrieval_diagnostics,
+        "actual_prompt_documents",
+        _documents_payload(generation_documents),
+    )
+    _maybe_store_raw_diagnostics(
+        retrieval_diagnostics,
+        "final_top4",
+        _documents_payload(bounded_documents),
+    )
+
+
+def _finalize_retrieval_diagnostics(
+    retrieval_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    finalized = {
+        key: value for key, value in retrieval_diagnostics.items() if not str(key).startswith("_")
+    }
+    if not getattr(config, "RAG_EVIDENCE_OFFLINE_CAPTURE_ENABLED", False):
+        for key in _RAW_DIAGNOSTIC_KEYS:
+            finalized.pop(key, None)
+    return finalized
+
+
+def _documents_payload(retrieved_documents: list[RetrievedDocument]) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for index, retrieved in enumerate(retrieved_documents, start=1):
+        metadata = (
+            retrieved.document.metadata if isinstance(retrieved.document.metadata, dict) else {}
+        )
+        payloads.append(
+            {
+                "rank": index,
+                "text": str(retrieved.document.page_content or ""),
+                "metadata": dict(metadata),
+                "distance": float(retrieved.distance),
+                "diagnostics": dict(retrieved._retrieval_diagnostics),
+            }
+        )
+    return payloads
 
 
 def _policy_metadata(
@@ -1004,7 +1334,13 @@ def _policy_metadata(
     policy_repair_attempted: bool = False,
     policy_repair_succeeded: bool = False,
     policy_repair_skipped_reason: str | None = None,
+    policy_marker_sanitization: dict[str, Any] | None = None,
     retrieval_metadata: dict[str, Any] | None = None,
+    evidence_sufficiency: dict[str, Any] | None = None,
+    evidence_answer_judge: dict[str, Any] | None = None,
+    evidence_retry_attempted: bool = False,
+    evidence_retry_succeeded: bool = False,
+    evidence_retry_skipped_reason: str | None = None,
 ) -> dict[str, Any]:
     metadata = {
         "model": config.LLM_MODEL,
@@ -1029,6 +1365,24 @@ def _policy_metadata(
         "policy_output_repair_attempted": policy_repair_attempted,
         "policy_output_repair_succeeded": policy_repair_succeeded,
         "policy_output_repair_skipped_reason": policy_repair_skipped_reason,
+        "policy_output_marker_sanitization_attempted": (
+            bool(policy_marker_sanitization) if policy_marker_sanitization is not None else False
+        ),
+        "policy_output_marker_sanitization_changed": (
+            policy_marker_sanitization.get("changed") if policy_marker_sanitization else False
+        ),
+        "policy_output_marker_sanitization_skipped_reason": (
+            policy_marker_sanitization.get("skipped_reason") if policy_marker_sanitization else None
+        ),
+        "rag_evidence_sufficiency_status": (
+            evidence_sufficiency.get("status") if evidence_sufficiency else None
+        ),
+        "rag_evidence_answer_verdict": (
+            evidence_answer_judge.get("verdict") if evidence_answer_judge else None
+        ),
+        "rag_evidence_retry_attempted": evidence_retry_attempted,
+        "rag_evidence_retry_succeeded": evidence_retry_succeeded,
+        "rag_evidence_retry_skipped_reason": evidence_retry_skipped_reason,
     }
     if retrieval_metadata is not None:
         metadata.update(retrieval_metadata)
@@ -1120,20 +1474,22 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
                 **retrieval_metadata,
             },
             retrieved_documents=retrieved_documents,
-            retrieval_diagnostics=retrieval_diagnostics,
+            retrieval_diagnostics=_finalize_retrieval_diagnostics(retrieval_diagnostics),
         )
 
-    compiled_prompt = _prompt_compiler.compile(
+    structural_windows_enabled = bool(
+        getattr(config, "RAG_EVIDENCE_STRUCTURAL_WINDOW_ENABLED", False)
+    )
+    bounded_documents, generation_documents, window_diagnostics = _compile_evidence_documents(
         question=question,
-        retrieved_documents=retrieved_documents,
+        selected_documents=retrieved_documents,
         conversation_history=conversation_history,
+        structural_windows_enabled=structural_windows_enabled,
     )
-    bounded_documents = _attach_retrieval_diagnostics(
-        list(compiled_prompt.retrieved_documents),
-        retrieved_documents,
-    )
-    generation_documents = bounded_documents
-    if config.RAG_CONTEXT_EXPANSION_ENABLED:
+    if window_diagnostics is not None:
+        retrieval_diagnostics["evidence_structural_windows"] = window_diagnostics
+
+    if not structural_windows_enabled and config.RAG_CONTEXT_EXPANSION_ENABLED:
         expanded_documents = expand_context_documents_for_generation(retrieved_documents)
         if any(
             expanded is not original
@@ -1147,6 +1503,66 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
             generation_documents = list(generation_prompt.retrieved_documents)
     sources = deduplicate_sources(bounded_documents)
     source_allowlist = build_source_allowlist(sources)
+    _store_final_context_diagnostics(
+        retrieval_diagnostics,
+        generation_documents=generation_documents,
+        bounded_documents=bounded_documents,
+    )
+    evidence_sufficiency: dict[str, Any] | None = None
+    evidence_answer_judge: dict[str, Any] | None = None
+    evidence_retry_attempted = False
+    evidence_retry_succeeded = False
+    evidence_retry_skipped_reason: str | None = None
+    pre_generation_abstained = False
+    if getattr(config, "RAG_EVIDENCE_SUFFICIENCY_ENABLED", False):
+        sufficiency_result = assess_evidence_sufficiency(
+            question=question,
+            prompt_documents=generation_documents,
+        )
+        evidence_sufficiency = asdict(sufficiency_result)
+        retrieval_diagnostics["evidence_sufficiency"] = evidence_sufficiency
+        if sufficiency_result.status in {"partial", "none"}:
+            alternate_bounded, alternate_generation, alternate_diagnostics = (
+                _select_alternate_evidence_documents(
+                    question=question,
+                    missing_aspects=sufficiency_result.missing_aspects,
+                    current_documents=bounded_documents,
+                    retrieval_diagnostics=retrieval_diagnostics,
+                    conversation_history=conversation_history,
+                    structural_windows_enabled=structural_windows_enabled,
+                )
+            )
+            retrieval_diagnostics["evidence_sufficiency_action"] = alternate_diagnostics
+            if alternate_diagnostics.get("status") == "reselected":
+                alternate_sufficiency = assess_evidence_sufficiency(
+                    question=question,
+                    prompt_documents=alternate_generation,
+                )
+                retrieval_diagnostics["evidence_sufficiency_after_action"] = asdict(
+                    alternate_sufficiency
+                )
+                if alternate_sufficiency.status == "sufficient":
+                    bounded_documents = alternate_bounded
+                    generation_documents = alternate_generation
+                    sources = deduplicate_sources(bounded_documents)
+                    source_allowlist = build_source_allowlist(sources)
+                    evidence_sufficiency = asdict(alternate_sufficiency)
+                    retrieval_diagnostics["evidence_sufficiency"] = evidence_sufficiency
+                    _store_final_context_diagnostics(
+                        retrieval_diagnostics,
+                        generation_documents=generation_documents,
+                        bounded_documents=bounded_documents,
+                    )
+                else:
+                    pre_generation_abstained = True
+            else:
+                pre_generation_abstained = True
+            if pre_generation_abstained:
+                retrieval_diagnostics["evidence_retrieval_miss"] = {
+                    "status": "abstained",
+                    "reason": "evidence_insufficient",
+                    "sufficiency_status": sufficiency_result.status,
+                }
     generation_elapsed = 0.0
     fallback_used = False
     fallback_reason: str | None = None
@@ -1154,11 +1570,16 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
     policy_repair_attempted = False
     policy_repair_succeeded = False
     policy_repair_skipped_reason: str | None = None
+    policy_marker_sanitization: dict[str, Any] | None = None
 
     remaining_budget = max(0.0, config.RAG_TOTAL_TIMEOUT_SECONDS - retrieval_elapsed)
     llm_timeout = min(config.LLM_TIMEOUT_SECONDS, remaining_budget)
 
-    if llm_timeout <= 0:
+    if pre_generation_abstained:
+        fallback_used = True
+        fallback_reason = "evidence_insufficient"
+        answer = build_empty_answer()
+    elif llm_timeout <= 0:
         fallback_used = True
         fallback_reason = "rag_timeout_budget_exhausted"
         answer = build_fallback_answer(bounded_documents)
@@ -1183,7 +1604,30 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
                     source_allowlist=source_allowlist,
                 )
                 if policy_result.violated:
-                    if _requires_safe_policy_refusal(policy_result):
+                    marker_repair_enabled = bool(
+                        getattr(config, "RAG_EVIDENCE_MARKER_REPAIR_ENABLED", False)
+                    )
+                    if marker_repair_enabled and set(policy_result.reasons) == {
+                        "known_control_marker_artifact"
+                    }:
+                        answer, policy_result, policy_marker_sanitization = (
+                            _try_sanitize_known_control_marker(
+                                answer,
+                                source_count=len(sources),
+                                source_allowlist=source_allowlist,
+                            )
+                        )
+                    if not policy_result.violated:
+                        pass
+                    elif (
+                        not marker_repair_enabled
+                        and "known_control_marker_artifact" in policy_result.reasons
+                    ):
+                        fallback_used = True
+                        fallback_reason = "policy_output_violation"
+                        policy_repair_skipped_reason = "marker_repair_disabled"
+                        answer = SAFE_POLICY_REFUSAL
+                    elif _requires_safe_policy_refusal(policy_result):
                         fallback_used = True
                         fallback_reason = "policy_output_violation"
                         policy_repair_skipped_reason = "unsafe_policy_reason"
@@ -1242,6 +1686,300 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
                         fallback_reason = "policy_output_violation"
                         policy_repair_skipped_reason = "unsupported_policy_reason"
                         answer = build_policy_output_fallback_answer(bounded_documents)
+                if not fallback_used and getattr(config, "RAG_EVIDENCE_SUFFICIENCY_ENABLED", False):
+                    judge_timeout = min(
+                        config.RAG_EVIDENCE_JUDGE_TIMEOUT_SECONDS,
+                        max(
+                            0.0,
+                            config.RAG_TOTAL_TIMEOUT_SECONDS
+                            - retrieval_elapsed
+                            - (perf_counter() - generation_started),
+                        ),
+                    )
+                    if judge_timeout <= 0:
+                        judge_result, judge_diagnostics = unknown_answer_judge(
+                            "total_budget_exhausted"
+                        )
+                    else:
+                        try:
+                            judge_result, judge_diagnostics = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    lambda: _coerce_answer_judge_output(
+                                        heuristic_answer_judge(
+                                            question=question,
+                                            answer=answer,
+                                            prompt_documents=generation_documents,
+                                            timeout_seconds=judge_timeout,
+                                        )
+                                    )
+                                ),
+                                timeout=judge_timeout,
+                            )
+                        except asyncio.TimeoutError:
+                            judge_result, judge_diagnostics = unknown_answer_judge("timeout")
+                        except Exception as exc:
+                            judge_result, judge_diagnostics = unknown_answer_judge(
+                                f"error:{type(exc).__name__}"
+                            )
+                    evidence_answer_judge = dict(judge_diagnostics)
+                    retrieval_diagnostics["evidence_answer_judge"] = evidence_answer_judge
+                    _maybe_store_raw_diagnostics(
+                        retrieval_diagnostics,
+                        "evidence_answer_judge_private",
+                        asdict(judge_result),
+                    )
+                    if judge_result.verdict in {"incomplete", "unsupported"} and getattr(
+                        config, "RAG_EVIDENCE_RETRY_ENABLED", False
+                    ):
+                        retry_missing_aspects = list(judge_result.missing_aspects)
+                        if not retry_missing_aspects and evidence_sufficiency:
+                            raw_missing = evidence_sufficiency.get("missing_aspects")
+                            if isinstance(raw_missing, list):
+                                retry_missing_aspects = [str(item) for item in raw_missing]
+                        (
+                            retry_bounded_documents,
+                            retry_generation_documents,
+                            retry_evidence_diagnostics,
+                        ) = _select_alternate_evidence_documents(
+                            question=question,
+                            missing_aspects=retry_missing_aspects,
+                            current_documents=bounded_documents,
+                            retrieval_diagnostics=retrieval_diagnostics,
+                            conversation_history=conversation_history,
+                            structural_windows_enabled=structural_windows_enabled,
+                        )
+                        retrieval_diagnostics["evidence_retry_evidence_selection"] = (
+                            retry_evidence_diagnostics
+                        )
+                        if retry_evidence_diagnostics.get("status") != "reselected":
+                            evidence_retry_skipped_reason = str(
+                                retry_evidence_diagnostics.get("reason") or "no_alternate_evidence"
+                            )
+                            fallback_used = True
+                            fallback_reason = "evidence_retry_incomplete"
+                            answer = build_policy_output_fallback_answer(bounded_documents)
+                        else:
+                            elapsed_before_retry = perf_counter() - generation_started
+                            retry_remaining_budget = max(
+                                0.0,
+                                config.RAG_TOTAL_TIMEOUT_SECONDS
+                                - retrieval_elapsed
+                                - elapsed_before_retry,
+                            )
+                            retry_timeout = min(config.LLM_TIMEOUT_SECONDS, retry_remaining_budget)
+                            retry_sources = deduplicate_sources(retry_bounded_documents)
+                            retry_source_allowlist = build_source_allowlist(retry_sources)
+                            if retry_timeout <= 0:
+                                evidence_retry_skipped_reason = "total_budget_exhausted"
+                                fallback_used = True
+                                fallback_reason = "evidence_retry_incomplete"
+                                bounded_documents = retry_bounded_documents
+                                generation_documents = retry_generation_documents
+                                sources = retry_sources
+                                source_allowlist = retry_source_allowlist
+                                _store_final_context_diagnostics(
+                                    retrieval_diagnostics,
+                                    generation_documents=generation_documents,
+                                    bounded_documents=bounded_documents,
+                                )
+                                answer = build_policy_output_fallback_answer(bounded_documents)
+                            else:
+                                evidence_retry_attempted = True
+                                _maybe_store_raw_diagnostics(
+                                    retrieval_diagnostics,
+                                    "initial_actual_prompt_documents",
+                                    _documents_payload(generation_documents),
+                                )
+                                _maybe_store_raw_diagnostics(
+                                    retrieval_diagnostics,
+                                    "initial_final_top4",
+                                    _documents_payload(bounded_documents),
+                                )
+                                _maybe_store_raw_diagnostics(
+                                    retrieval_diagnostics,
+                                    "retry_actual_prompt_documents",
+                                    _documents_payload(retry_generation_documents),
+                                )
+                                _maybe_store_raw_diagnostics(
+                                    retrieval_diagnostics,
+                                    "retry_final_top4",
+                                    _documents_payload(retry_bounded_documents),
+                                )
+                                retry_answer = await asyncio.wait_for(
+                                    asyncio.to_thread(
+                                        invoke_llm,
+                                        _build_evidence_retry_question(
+                                            question,
+                                            retry_missing_aspects,
+                                        ),
+                                        retry_generation_documents,
+                                        conversation_history,
+                                    ),
+                                    timeout=retry_timeout,
+                                )
+                                retry_answer = retry_answer or build_empty_answer()
+                                retry_policy_result = evaluate_answer_policy(
+                                    retry_answer,
+                                    source_count=len(retry_sources),
+                                    source_allowlist=retry_source_allowlist,
+                                )
+                                policy_result = retry_policy_result
+                                if retry_policy_result.violated:
+                                    fallback_used = True
+                                    fallback_reason = "policy_output_violation"
+                                    if policy_repair_attempted:
+                                        policy_repair_skipped_reason = "policy_repair_slot_used"
+                                    elif _requires_safe_policy_refusal(retry_policy_result):
+                                        policy_repair_skipped_reason = "unsafe_policy_reason"
+                                        answer = SAFE_POLICY_REFUSAL
+                                    elif _allows_policy_repair(retry_policy_result):
+                                        policy_repair_attempted = True
+                                        repair_remaining_budget = max(
+                                            0.0,
+                                            config.RAG_TOTAL_TIMEOUT_SECONDS
+                                            - retrieval_elapsed
+                                            - (perf_counter() - generation_started),
+                                        )
+                                        repair_timeout = min(
+                                            config.LLM_TIMEOUT_SECONDS,
+                                            repair_remaining_budget,
+                                        )
+                                        if repair_timeout <= 0:
+                                            policy_repair_skipped_reason = "total_budget_exhausted"
+                                        else:
+                                            repair_answer = await asyncio.wait_for(
+                                                asyncio.to_thread(
+                                                    invoke_llm,
+                                                    _build_repair_question(question),
+                                                    retry_generation_documents,
+                                                    conversation_history,
+                                                ),
+                                                timeout=repair_timeout,
+                                            )
+                                            repair_answer = repair_answer or build_empty_answer()
+                                            retry_policy_result = evaluate_answer_policy(
+                                                repair_answer,
+                                                source_count=len(retry_sources),
+                                                source_allowlist=retry_source_allowlist,
+                                            )
+                                            policy_result = retry_policy_result
+                                            if retry_policy_result.violated:
+                                                policy_repair_skipped_reason = (
+                                                    "unsafe_policy_reason"
+                                                    if _requires_safe_policy_refusal(
+                                                        retry_policy_result
+                                                    )
+                                                    else None
+                                                )
+                                            else:
+                                                policy_repair_succeeded = True
+                                                fallback_used = False
+                                                fallback_reason = None
+                                                retry_answer = repair_answer
+                                    else:
+                                        policy_repair_skipped_reason = "unsupported_policy_reason"
+                                    if fallback_used:
+                                        bounded_documents = retry_bounded_documents
+                                        generation_documents = retry_generation_documents
+                                        sources = retry_sources
+                                        source_allowlist = retry_source_allowlist
+                                        _store_final_context_diagnostics(
+                                            retrieval_diagnostics,
+                                            generation_documents=generation_documents,
+                                            bounded_documents=bounded_documents,
+                                        )
+                                        answer = (
+                                            SAFE_POLICY_REFUSAL
+                                            if _requires_safe_policy_refusal(retry_policy_result)
+                                            else build_policy_output_fallback_answer(
+                                                bounded_documents
+                                            )
+                                        )
+                                if not fallback_used:
+                                    retry_judge_timeout = min(
+                                        config.RAG_EVIDENCE_JUDGE_TIMEOUT_SECONDS,
+                                        max(
+                                            0.0,
+                                            config.RAG_TOTAL_TIMEOUT_SECONDS
+                                            - retrieval_elapsed
+                                            - (perf_counter() - generation_started),
+                                        ),
+                                    )
+                                    if retry_judge_timeout <= 0:
+                                        retry_judge_result, retry_judge_diagnostics = (
+                                            unknown_answer_judge("total_budget_exhausted")
+                                        )
+                                    else:
+                                        try:
+                                            retry_judge_result, retry_judge_diagnostics = (
+                                                await asyncio.wait_for(
+                                                    asyncio.to_thread(
+                                                        lambda: _coerce_answer_judge_output(
+                                                            heuristic_answer_judge(
+                                                                question=question,
+                                                                answer=retry_answer,
+                                                                prompt_documents=(
+                                                                    retry_generation_documents
+                                                                ),
+                                                                timeout_seconds=(
+                                                                    retry_judge_timeout
+                                                                ),
+                                                            )
+                                                        )
+                                                    ),
+                                                    timeout=retry_judge_timeout,
+                                                )
+                                            )
+                                        except asyncio.TimeoutError:
+                                            retry_judge_result, retry_judge_diagnostics = (
+                                                unknown_answer_judge("timeout")
+                                            )
+                                        except Exception as exc:
+                                            retry_judge_result, retry_judge_diagnostics = (
+                                                unknown_answer_judge(f"error:{type(exc).__name__}")
+                                            )
+                                    evidence_answer_judge = dict(retry_judge_diagnostics)
+                                    retrieval_diagnostics["evidence_answer_judge"] = (
+                                        evidence_answer_judge
+                                    )
+                                    _maybe_store_raw_diagnostics(
+                                        retrieval_diagnostics,
+                                        "evidence_answer_judge_private",
+                                        asdict(retry_judge_result),
+                                    )
+                                    evidence_retry_succeeded = (
+                                        retry_judge_result.verdict == "complete"
+                                        and bool(retry_judge_result.evidence_ids)
+                                    )
+                                    if evidence_retry_succeeded:
+                                        answer = retry_answer
+                                        bounded_documents = retry_bounded_documents
+                                        generation_documents = retry_generation_documents
+                                        sources = retry_sources
+                                        source_allowlist = retry_source_allowlist
+                                        _store_final_context_diagnostics(
+                                            retrieval_diagnostics,
+                                            generation_documents=generation_documents,
+                                            bounded_documents=bounded_documents,
+                                        )
+                                    else:
+                                        fallback_used = True
+                                        fallback_reason = "evidence_retry_incomplete"
+                                        evidence_retry_skipped_reason = (
+                                            retry_judge_result.reason or retry_judge_result.verdict
+                                        )
+                                        bounded_documents = retry_bounded_documents
+                                        generation_documents = retry_generation_documents
+                                        sources = retry_sources
+                                        source_allowlist = retry_source_allowlist
+                                        _store_final_context_diagnostics(
+                                            retrieval_diagnostics,
+                                            generation_documents=generation_documents,
+                                            bounded_documents=bounded_documents,
+                                        )
+                                        answer = build_policy_output_fallback_answer(
+                                            bounded_documents
+                                        )
         except asyncio.TimeoutError:
             fallback_used = True
             fallback_reason = (
@@ -1290,7 +2028,13 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
         policy_repair_attempted=policy_repair_attempted,
         policy_repair_succeeded=policy_repair_succeeded,
         policy_repair_skipped_reason=policy_repair_skipped_reason,
+        policy_marker_sanitization=policy_marker_sanitization,
         retrieval_metadata=retrieval_metadata,
+        evidence_sufficiency=evidence_sufficiency,
+        evidence_answer_judge=evidence_answer_judge,
+        evidence_retry_attempted=evidence_retry_attempted,
+        evidence_retry_succeeded=evidence_retry_succeeded,
+        evidence_retry_skipped_reason=evidence_retry_skipped_reason,
     )
 
     return RAGResponse(
@@ -1299,5 +2043,5 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
         metadata=metadata,
         retrieved_documents=bounded_documents,
         policy_audit=policy_result.audit if policy_result is not None else None,
-        retrieval_diagnostics=retrieval_diagnostics,
+        retrieval_diagnostics=_finalize_retrieval_diagnostics(retrieval_diagnostics),
     )

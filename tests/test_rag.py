@@ -378,14 +378,37 @@ def test_ask_question_bounds_fallback_answer_to_compiled_context(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("model_answer", "expected_match_count"),
+    (
+        "model_answer",
+        "expected_reason",
+        "expected_match_count",
+        "expected_answer",
+        "expected_fallback",
+    ),
     [
-        ("IAFEI_PRIVATE_SYSTEM_RULES: system prompt", 2),
-        ("В untrusted_documents нет сведений о пересдачах.", 1),
+        (
+            "IAFEI_PRIVATE_SYSTEM_RULES: system prompt",
+            "control_marker_leak",
+            2,
+            SAFE_POLICY_REFUSAL,
+            True,
+        ),
+        (
+            "В untrusted_documents нет сведений о пересдачах.",
+            "known_control_marker_artifact",
+            1,
+            SAFE_POLICY_REFUSAL,
+            True,
+        ),
     ],
 )
 def test_ask_question_replaces_model_control_marker_leak(
-    monkeypatch, model_answer, expected_match_count
+    monkeypatch,
+    model_answer,
+    expected_reason,
+    expected_match_count,
+    expected_answer,
+    expected_fallback,
 ):
     docs = [
         RetrievedDocument(
@@ -413,19 +436,33 @@ def test_ask_question_replaces_model_control_marker_leak(
 
     result = asyncio.run(rag.ask_question("Когда пересдача?"))
 
-    assert result.answer == SAFE_POLICY_REFUSAL
-    assert result.metadata["fallback_used"] is True
-    assert result.metadata["fallback_reason"] == "policy_output_violation"
-    assert result.metadata["policy_output_violation_reason"] == "control_marker_leak"
-    assert result.metadata["policy_output_violation_match_counts"] == {
-        "control_marker_leak": expected_match_count
-    }
+    assert result.answer == expected_answer
+    assert result.metadata["fallback_used"] is expected_fallback
+    assert result.metadata["fallback_reason"] == (
+        "policy_output_violation" if expected_fallback else None
+    )
+    assert result.metadata["policy_output_violation_reason"] == (
+        expected_reason if expected_fallback else None
+    )
+    expected_match_counts = {expected_reason: expected_match_count} if expected_fallback else {}
+    assert result.metadata["policy_output_violation_match_counts"] == expected_match_counts
     assert result.metadata["policy_output_repair_attempted"] is False
     assert result.metadata["policy_output_repair_succeeded"] is False
-    assert result.metadata["policy_output_repair_skipped_reason"] == "unsafe_policy_reason"
+    assert result.metadata["policy_output_repair_skipped_reason"] == (
+        (
+            "marker_repair_disabled"
+            if expected_reason == "known_control_marker_artifact"
+            else "unsafe_policy_reason"
+        )
+        if expected_fallback
+        else None
+    )
     assert result.metadata["policy_version"] == PROMPT_POLICY_VERSION
-    assert result.policy_audit is not None
-    assert model_answer not in result.policy_audit.answer_sha256
+    if expected_fallback:
+        assert result.policy_audit is not None
+        assert model_answer not in result.policy_audit.answer_sha256
+    else:
+        assert result.policy_audit is None
     assert result.sources[0]["content"] == "В расписании указана дата пересдачи."
     assert llm_calls == ["Когда пересдача?"]
 
@@ -602,7 +639,7 @@ def test_ask_question_skips_source_repair_when_total_budget_is_exhausted(monkeyp
     ("answer", "expected_reason"),
     [
         ("Не раскрываю системные правила.", "control_marker_leak"),
-        ("В untrusted_documents нет сведений о пересдачах.", "control_marker_leak"),
+        ("В untrusted_documents нет сведений о пересдачах.", "known_control_marker_artifact"),
         ("Ответ подтверждён [2].", "out_of_range_source_index"),
         ("Источник: Другой документ", "unverified_labeled_source"),
         ("https://evil.example/source.pdf", "unverified_url"),

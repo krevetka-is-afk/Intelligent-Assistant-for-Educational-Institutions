@@ -10,7 +10,7 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from .rag_evaluation import RAGEvaluationCase, _matches_any, load_evaluation_cases
-from .rag_stage7_evaluation import (
+from .rag_stage_evaluation import (
     _apply_frozen_index,
     _clone_retrieved_documents,
     _dense_similarity_search_direct,

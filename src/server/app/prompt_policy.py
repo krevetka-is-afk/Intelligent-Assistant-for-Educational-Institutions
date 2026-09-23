@@ -66,7 +66,55 @@ _CONTROL_LEAK_PATTERNS = (
     re.compile(r"\b(system|developer)\s+(prompt|message|instruction|rules?)\b", re.I),
     re.compile(r"(системн\w+\s+(промпт|сообщен|инструкц|правил))", re.I),
     re.compile(r"\b(api[_ -]?key|secret|token|cookie|database_url|connection\s*string)\b", re.I),
-    re.compile(r"\b(?:untrusted_documents|untrusted_history|user_question|policy_version)\b", re.I),
+    re.compile(re.escape(PROMPT_POLICY_VERSION), re.I),
+)
+_KNOWN_CONTROL_MARKER_REPLACEMENTS = {
+    "untrusted_documents": "найденные источники",
+    "untrusted_history": "история диалога",
+    "user_question": "вопрос пользователя",
+    "policy_version": "версия политики ответа",
+}
+_KNOWN_CONTROL_MARKER_PATTERN = re.compile(
+    r"\b(?:" + "|".join(map(re.escape, _KNOWN_CONTROL_MARKER_REPLACEMENTS)) + r")\b",
+    re.I,
+)
+_KNOWN_CONTROL_MARKER_ALTERNATION = "|".join(map(re.escape, _KNOWN_CONTROL_MARKER_REPLACEMENTS))
+_KNOWN_CONTROL_MARKER_AMBIGUOUS_CONTEXT_PATTERN = re.compile(
+    rf"(?:[`'\"{{]\s*(?:{_KNOWN_CONTROL_MARKER_ALTERNATION})\s*[`'\":=]|\b"
+    rf"(?:поле|ключ|параметр|field|key|parameter)\s+(?:{_KNOWN_CONTROL_MARKER_ALTERNATION})\b)",
+    re.I,
+)
+_KNOWN_CONTROL_MARKER_CONTEXT_REPLACEMENTS = (
+    (
+        re.compile(r"\b([Вв])\s+untrusted_documents\b"),
+        lambda match: f"{match.group(1)} найденных источниках",
+    ),
+    (
+        re.compile(r"\b([Ии])з\s+untrusted_documents\b"),
+        lambda match: f"{match.group(1)}з найденных источников",
+    ),
+    (
+        re.compile(r"\b([Вв])\s+untrusted_history\b"),
+        lambda match: f"{match.group(1)} истории диалога",
+    ),
+    (
+        re.compile(r"\b([Вв])\s+user_question\b"),
+        lambda match: f"{match.group(1)} вопросе пользователя",
+    ),
+    (
+        re.compile(r"\b([Вв])\s+policy_version\b"),
+        lambda match: f"{match.group(1)} версии политики ответа",
+    ),
+)
+_CONTROL_TAG_PATTERN = re.compile(
+    r"(?:<\s*/?\s*(?:system|developer|assistant|tool)\b|"
+    r"<\|/?(?:im_start|im_end|system|developer|assistant|tool)\|>|"
+    r"\[(?:/?(?:im_start|im_end|system|developer|assistant|tool))\])",
+    re.I,
+)
+_SECRET_ASSIGNMENT_PATTERN = re.compile(
+    r"(?<![\w-])(?P<name>[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|COOKIE))"
+    r"\s*(?:=|:)\s*(?P<value>[^\s,;]+)",
 )
 _SOURCE_REFERENCE_PATTERN = re.compile(
     r"(?:\[(?P<bracket>\d{1,3})\])|"
@@ -94,6 +142,7 @@ class PromptRejection:
 
 AnswerPolicyReason = Literal[
     "control_marker_leak",
+    "known_control_marker_artifact",
     "out_of_range_source_index",
     "unverified_labeled_source",
     "unverified_url",
@@ -102,6 +151,7 @@ AnswerPolicyReason = Literal[
 ANSWER_POLICY_REASONS: frozenset[AnswerPolicyReason] = frozenset(
     {
         "control_marker_leak",
+        "known_control_marker_artifact",
         "out_of_range_source_index",
         "unverified_labeled_source",
         "unverified_url",
@@ -152,6 +202,13 @@ class AnswerPolicyResult:
         return counts
 
 
+@dataclass(frozen=True, slots=True)
+class KnownControlMarkerSanitization:
+    sanitized_answer: str
+    changed: bool
+    skipped_reason: str | None = None
+
+
 class PromptPolicyViolation(RuntimeError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
@@ -180,6 +237,107 @@ def _truncate(value: str, limit: int) -> str:
     if limit <= 3:
         return compact[:limit]
     return compact[: limit - 3].rstrip() + "..."
+
+
+def _configured_runtime_secret_values() -> tuple[tuple[str, str], ...]:
+    secrets: list[tuple[str, str]] = []
+    for name in ("API_KEY", "TELEGRAM_SERVICE_KEY", "WEB_BOOTSTRAP_ADMIN_TOKEN"):
+        value = getattr(config, name, None)
+        if not isinstance(value, str):
+            continue
+        normalized = value.strip()
+        if normalized:
+            secrets.append((name, normalized))
+    return tuple(secrets)
+
+
+def _contains_runtime_secret_value(answer: str, secret_value: str) -> bool:
+    if len(secret_value) >= 8:
+        return secret_value in answer
+    pattern = re.compile(rf"(?<![\w-]){re.escape(secret_value)}(?![\w-])")
+    return pattern.search(answer) is not None
+
+
+def _has_runtime_secret_value(answer: str) -> bool:
+    return any(
+        _contains_runtime_secret_value(answer, secret_value)
+        for _, secret_value in _configured_runtime_secret_values()
+    )
+
+
+def _runtime_secret_value_matches(answer: str) -> tuple[AnswerPolicyMatch, ...]:
+    return tuple(
+        AnswerPolicyMatch("control_marker_leak", f"runtime_secret_value:{secret_name}")
+        for secret_name, secret_value in _configured_runtime_secret_values()
+        if _contains_runtime_secret_value(answer, secret_value)
+    )
+
+
+def _secret_assignment_matches(answer: str) -> tuple[AnswerPolicyMatch, ...]:
+    matches: list[AnswerPolicyMatch] = []
+    for match in _SECRET_ASSIGNMENT_PATTERN.finditer(answer):
+        value = match.group("value").strip().strip("\"'")
+        if value:
+            matches.append(
+                AnswerPolicyMatch(
+                    "control_marker_leak",
+                    f"secret_assignment:{match.group('name')}",
+                )
+            )
+    return tuple(matches)
+
+
+def _has_unsafe_control_marker(answer: str) -> bool:
+    compact = _compact_text(answer)
+    return (
+        any(pattern.search(compact) for pattern in _CONTROL_LEAK_PATTERNS)
+        or _CONTROL_TAG_PATTERN.search(compact) is not None
+        or _has_runtime_secret_value(answer)
+        or bool(_secret_assignment_matches(answer))
+    )
+
+
+def sanitize_known_control_marker_artifacts(answer: str) -> KnownControlMarkerSanitization:
+    """Replace only standalone known prompt-field names when the rewrite is deterministic."""
+
+    if _has_unsafe_control_marker(answer):
+        return KnownControlMarkerSanitization(
+            sanitized_answer=answer,
+            changed=False,
+            skipped_reason="unsafe_control_marker",
+        )
+
+    if _KNOWN_CONTROL_MARKER_PATTERN.search(answer) is None:
+        return KnownControlMarkerSanitization(
+            sanitized_answer=answer,
+            changed=False,
+            skipped_reason="no_known_control_marker",
+        )
+    if _KNOWN_CONTROL_MARKER_AMBIGUOUS_CONTEXT_PATTERN.search(answer):
+        return KnownControlMarkerSanitization(
+            sanitized_answer=answer,
+            changed=False,
+            skipped_reason="ambiguous_marker_context",
+        )
+
+    sanitized = answer
+    replacement_count = 0
+    for pattern, replacement in _KNOWN_CONTROL_MARKER_CONTEXT_REPLACEMENTS:
+        sanitized, count = pattern.subn(replacement, sanitized)
+        replacement_count += count
+
+    if replacement_count == 0 or _KNOWN_CONTROL_MARKER_PATTERN.search(sanitized):
+        return KnownControlMarkerSanitization(
+            sanitized_answer=answer,
+            changed=False,
+            skipped_reason="ambiguous_marker_context",
+        )
+
+    return KnownControlMarkerSanitization(
+        sanitized_answer=sanitized,
+        changed=True,
+        skipped_reason=None,
+    )
 
 
 def evaluate_question_policy(question: str) -> PromptRejection | None:
@@ -364,6 +522,16 @@ def evaluate_answer_policy(
             AnswerPolicyMatch("control_marker_leak", f"control_leak_{pattern_index}")
             for _ in pattern.finditer(compact)
         )
+    matches.extend(
+        AnswerPolicyMatch("control_marker_leak", "control_tag")
+        for _ in _CONTROL_TAG_PATTERN.finditer(compact)
+    )
+    matches.extend(_runtime_secret_value_matches(answer))
+    matches.extend(_secret_assignment_matches(answer))
+    matches.extend(
+        AnswerPolicyMatch("known_control_marker_artifact", "known_control_marker_artifact")
+        for _ in _KNOWN_CONTROL_MARKER_PATTERN.finditer(compact)
+    )
 
     if source_count is not None:
         for match in _SOURCE_REFERENCE_PATTERN.finditer(compact):
