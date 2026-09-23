@@ -17,6 +17,7 @@
 - FastAPI, Streamlit и Telegram-бот используют единый env-контракт и структурированное логирование
 - `docker-compose.yaml` поднимает `db`, `server`, `bot`, `client` с healthcheck и `restart: unless-stopped`
 - при сбоях LLM RAG возвращает fallback-ответ и логирует причину на уровне `ERROR`
+- retrieval использует dense-поиск Chroma и SQLite FTS5, объединяет кандидатов через RRF и передаёт модели финальные `RAG_TOP_K=4` фрагмента
 
 ## Переменные окружения
 
@@ -55,6 +56,9 @@
 | `RAG_MAX_HISTORY_CHARS`            | `server`                  | Общий лимит символов истории в prompt                                                                                                                    |
 | `RAG_SOURCE_SNIPPET_CHARS`         | `server`                  | Максимальная длина возвращаемой цитаты источника, включая многоточие при обрезке                                                                         |
 | `RAG_TOTAL_TIMEOUT_SECONDS`        | `server`                  | Общий бюджет времени RAG                                                                                                                                 |
+| `RAG_QUERY_REWRITE_ENABLED`        | `server`                  | Включает дополнительную общую переформулировку поискового запроса; по умолчанию `0`                                                                      |
+| `RAG_QUERY_REWRITE_MODEL`          | `server`                  | Локальная Ollama-модель для переформулировки; если не задана, используется `LLM_MODEL`                                                                   |
+| `RAG_QUERY_REWRITE_TIMEOUT_SECONDS` | `server`                 | Таймаут переформулировки поискового запроса                                                                                                              |
 | `LLM_TIMEOUT_SECONDS`              | `server`                  | Таймаут вызова LLM                                                                                                                                       |
 | `DOCUMENT_OCR_ENABLED`             | `indexer`                 | Включает OCR fallback для PDF-страниц без извлекаемого текста; по умолчанию выключен                                                                     |
 | `DOCUMENT_OCR_LANG`                | `indexer`                 | Языки Tesseract для OCR, по умолчанию `rus+eng`                                                                                                          |
@@ -94,6 +98,21 @@ Policy refusals не записываются в conversation memory и не о�
 В production автоиндексация отключена по умолчанию: `AUTO_INDEX_ON_STARTUP=0`. Корпус нужно
 индексировать явной командой после ручного просмотра состава документов; закрытые документы не
 следует добавлять в выпускной корпус без правил доступа.
+
+## Качество RAG
+
+Текущий проверенный корпус зафиксирован как **881 документ / 21 127 чанков** в SQLite FTS5 и
+**21 127 embeddings** в Chroma. Итоговый отчёт этапа 7: [`EVIDENCE/rag-quality-stage-7-final-2026-09-23.md`](EVIDENCE/rag-quality-stage-7-final-2026-09-23.md).
+
+Вывод этапа 7: query rewrite, BGE-M3 и Qwen3 не включены по умолчанию, потому что ни один вариант
+не выполнил критерий попадания ожидаемого документа в top-5 каждого контрольного вопроса.
+`RAG_QUERY_REWRITE_ENABLED=0` остаётся базовым режимом. Следующий staged-эксперимент с выбором
+контекста описывается в [`EVIDENCE/rag-context-selection-2026-09-23.md`](EVIDENCE/rag-context-selection-2026-09-23.md).
+Retrieval-only этап показал, что 8 из 11 baseline-промахов можно восстановить из RRF top-16.
+Selector pilot Stage B на четырёх заранее выбранных случаях изменил raw expected-source Hit@4
+с 0/4 до 2/4. Ручная проверка показала, что оба формальных попадания не дают достаточного
+контекста для полного ответа, а один полезный набор фрагментов не засчитан узкой gold-разметкой.
+Качество ответов не подтверждено; Stage C не запускался, селектор в production не включён.
 
 ## Локальный запуск
 
@@ -194,7 +213,7 @@ uv run python -m src.server.app.index_documents \
 восстановить без повторного embedding:
 
 ```bash
-python -m src.server.app.backfill_lexical \
+uv run python -m src.server.app.backfill_lexical \
   --persist-dir /data \
   --collection-name "${CHROMA_COLLECTION_NAME:-edu_documents}" \
   --lexical-index-path "${LEXICAL_INDEX_PATH:-/data/lexical_index.sqlite3}"

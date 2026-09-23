@@ -13,7 +13,7 @@ from langchain_ollama.llms import OllamaLLM
 
 from app_runtime import log_extra
 
-from . import config
+from . import config, query_rewrite
 from .prompt_policy import (
     PROMPT_POLICY_VERSION,
     SAFE_POLICY_REFUSAL,
@@ -232,6 +232,9 @@ def _chunk_key(retrieved: RetrievedDocument) -> tuple[Any, ...]:
 
 def _document_key(retrieved: RetrievedDocument) -> tuple[Any, ...]:
     metadata = retrieved.document.metadata or {}
+    source_sha256 = metadata.get("source_sha256")
+    if source_sha256 is not None:
+        return ("source_sha256", source_sha256)
     document_id = metadata.get("document_id")
     if document_id is not None:
         return ("document_id", document_id)
@@ -303,8 +306,7 @@ def lexical_similarity_search(question: str, *, k: int) -> tuple[list[RetrievedD
         raw_results = search_lexical(question, **kwargs)
     except Exception as exc:
         logger.warning(
-            "Lexical search failed, degrading to dense-only retrieval: %s",
-            exc,
+            "Lexical search failed, degrading to dense-only retrieval",
             extra=log_extra(stage="retrieval", error_type=type(exc).__name__),
         )
         return [], False
@@ -335,6 +337,8 @@ def _rank_hybrid_documents(
     top_k: int,
     rrf_k: int,
     max_chunks_per_document: int,
+    dense_rewrite_documents: list[RetrievedDocument] | None = None,
+    lexical_rewrite_documents: list[RetrievedDocument] | None = None,
 ) -> tuple[list[RetrievedDocument], dict[str, Any]]:
     candidates: dict[tuple[Any, ...], dict[str, Any]] = {}
 
@@ -352,23 +356,33 @@ def _rank_hybrid_documents(
                 "best_rank": rank,
             },
         )
-        if channel == "dense":
+        dense_channel = channel.startswith("dense")
+        has_dense_channel = any(
+            existing_channel.startswith("dense") for existing_channel in candidate["channel_ranks"]
+        )
+        if dense_channel:
             candidate["retrieved"] = retrieved
-            candidate["channel_scores"]["dense_distance"] = float(retrieved.distance)
-        elif "dense" not in candidate["channel_ranks"]:
+            score_key = "dense_distance" if channel == "dense" else f"{channel}_distance"
+            candidate["channel_scores"][score_key] = float(retrieved.distance)
+        elif not has_dense_channel:
             candidate["retrieved"] = retrieved
         candidate["rrf_score"] += 1.0 / (rrf_k + rank)
         candidate["channel_ranks"][channel] = rank
         candidate["best_rank"] = min(candidate["best_rank"], rank)
-        if channel == "lexical":
+        if channel.startswith("lexical"):
             score = retrieved._retrieval_diagnostics.get("lexical_score")
             if score is not None:
-                candidate["channel_scores"]["lexical_score"] = score
+                score_key = "lexical_score" if channel == "lexical" else f"{channel}_score"
+                candidate["channel_scores"][score_key] = score
 
     for rank, retrieved in enumerate(dense_documents, start=1):
         add_candidate("dense", rank, retrieved)
     for rank, retrieved in enumerate(lexical_documents, start=1):
         add_candidate("lexical", rank, retrieved)
+    for rank, retrieved in enumerate(dense_rewrite_documents or [], start=1):
+        add_candidate("dense_rewrite", rank, retrieved)
+    for rank, retrieved in enumerate(lexical_rewrite_documents or [], start=1):
+        add_candidate("lexical_rewrite", rank, retrieved)
 
     for candidate in candidates.values():
         quality_multiplier = _quality_score_multiplier(candidate["retrieved"])
@@ -434,7 +448,7 @@ def _rank_hybrid_documents(
     )
     for rank, candidate in enumerate(selected, start=1):
         retrieved = candidate["retrieved"]
-        if "dense" in candidate["channel_ranks"]:
+        if any(channel.startswith("dense") for channel in candidate["channel_ranks"]):
             retrieved.distance = _bounded_distance(retrieved.distance, fallback=1.0)
         else:
             normalized_fusion_score = (
@@ -479,7 +493,12 @@ def _attach_retrieval_diagnostics(
     return bounded_documents
 
 
-def retrieve_documents(question: str, *, k: int | None = None) -> tuple[
+def retrieve_documents(
+    question: str,
+    *,
+    k: int | None = None,
+    expanded_query: str | None = None,
+) -> tuple[
     list[RetrievedDocument],
     dict[str, Any],
     dict[str, Any],
@@ -491,28 +510,79 @@ def retrieve_documents(question: str, *, k: int | None = None) -> tuple[
     )
     rrf_k = _get_positive_int_config("RAG_RRF_K", 60)
     max_chunks_per_document = _get_positive_int_config("RAG_MAX_CHUNKS_PER_DOCUMENT", 1)
+    normalized_expanded_query = (expanded_query or "").strip()
+    use_expanded_query = bool(
+        normalized_expanded_query
+        and normalized_expanded_query.casefold() != question.strip().casefold()
+    )
 
     dense_documents = dense_similarity_search(question, k=candidate_pool_size)
     lexical_documents, lexical_available = lexical_similarity_search(
         question,
         k=candidate_pool_size,
     )
+    expanded_dense_documents: list[RetrievedDocument] = []
+    expanded_lexical_documents: list[RetrievedDocument] = []
+    expanded_lexical_available = False
+    expanded_search_failed = False
+    expanded_search_error_type: str | None = None
+    expanded_search_error_stage: str | None = None
+    if use_expanded_query:
+        try:
+            expanded_dense_documents = dense_similarity_search(
+                normalized_expanded_query,
+                k=candidate_pool_size,
+            )
+            expanded_lexical_documents, expanded_lexical_available = lexical_similarity_search(
+                normalized_expanded_query,
+                k=candidate_pool_size,
+            )
+        except Exception as exc:
+            expanded_search_failed = True
+            expanded_search_error_type = type(exc).__name__
+            expanded_search_error_stage = "dense" if not expanded_dense_documents else "lexical"
+            expanded_dense_documents = []
+            expanded_lexical_documents = []
+            expanded_lexical_available = False
+            logger.warning(
+                "Expanded retrieval failed, degrading to original-query candidates",
+                extra=log_extra(
+                    stage="retrieval",
+                    error_type=expanded_search_error_type,
+                    retrieval_lane="expanded",
+                    retrieval_stage=expanded_search_error_stage,
+                ),
+            )
 
+    all_dense_documents = dense_documents + expanded_dense_documents
+    all_lexical_documents = lexical_documents + expanded_lexical_documents
     retrieved_documents, diagnostics = _rank_hybrid_documents(
         dense_documents=dense_documents,
         lexical_documents=lexical_documents,
+        dense_rewrite_documents=expanded_dense_documents,
+        lexical_rewrite_documents=expanded_lexical_documents,
         top_k=top_k,
         rrf_k=rrf_k,
         max_chunks_per_document=max_chunks_per_document,
     )
-    strategy = "hybrid" if lexical_documents else "dense_only"
+    strategy = "hybrid" if all_lexical_documents else "dense_only"
+    query_count = 2 if use_expanded_query else 1
 
     retrieval_metadata = {
         "retrieval_strategy": strategy,
         "retrieval_candidate_pool_size": candidate_pool_size,
-        "retrieval_dense_candidate_count": len(dense_documents),
-        "retrieval_lexical_candidate_count": len(lexical_documents),
-        "retrieval_lexical_available": lexical_available,
+        "retrieval_dense_candidate_count": len(all_dense_documents),
+        "retrieval_lexical_candidate_count": len(all_lexical_documents),
+        "retrieval_lexical_available": lexical_available or expanded_lexical_available,
+        "retrieval_query_count": query_count,
+        "retrieval_rewrite_used": use_expanded_query,
+        "retrieval_original_dense_candidate_count": len(dense_documents),
+        "retrieval_original_lexical_candidate_count": len(lexical_documents),
+        "retrieval_expanded_dense_candidate_count": len(expanded_dense_documents),
+        "retrieval_expanded_lexical_candidate_count": len(expanded_lexical_documents),
+        "retrieval_expanded_search_failed": expanded_search_failed,
+        "retrieval_expanded_search_error_type": expanded_search_error_type,
+        "retrieval_expanded_search_error_stage": expanded_search_error_stage,
     }
     diagnostics.update(
         {
@@ -520,7 +590,16 @@ def retrieve_documents(question: str, *, k: int | None = None) -> tuple[
             "candidate_pool_size": candidate_pool_size,
             "rrf_k": rrf_k,
             "max_chunks_per_document": max_chunks_per_document,
-            "lexical_available": lexical_available,
+            "lexical_available": lexical_available or expanded_lexical_available,
+            "query_count": query_count,
+            "rewrite_used": use_expanded_query,
+            "original_dense_candidate_count": len(dense_documents),
+            "original_lexical_candidate_count": len(lexical_documents),
+            "expanded_dense_candidate_count": len(expanded_dense_documents),
+            "expanded_lexical_candidate_count": len(expanded_lexical_documents),
+            "expanded_search_failed": expanded_search_failed,
+            "expanded_search_error_type": expanded_search_error_type,
+            "expanded_search_error_stage": expanded_search_error_stage,
         }
     )
     return retrieved_documents, retrieval_metadata, diagnostics
@@ -702,12 +781,25 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
 
     retrieval_query = build_retrieval_query(question, conversation_history)
     retrieval_started = perf_counter()
+    rewrite_result = await asyncio.to_thread(
+        query_rewrite.rewrite_retrieval_query,
+        retrieval_query,
+        conversation_history,
+    )
     retrieved_documents, retrieval_metadata, retrieval_diagnostics = await asyncio.to_thread(
         retrieve_documents,
         retrieval_query,
         k=config.RAG_TOP_K,
+        expanded_query=rewrite_result.query if rewrite_result.used else None,
     )
     retrieval_elapsed = perf_counter() - retrieval_started
+    rewrite_metadata = {
+        "query_rewrite_used": rewrite_result.used,
+        "query_rewrite_fallback_reason": rewrite_result.fallback_reason,
+        "query_rewrite_history_used": rewrite_result.history_used,
+    }
+    retrieval_metadata.update(rewrite_metadata)
+    retrieval_diagnostics["query_rewrite"] = dict(rewrite_result.diagnostics)
 
     if not retrieved_documents:
         total_elapsed = perf_counter() - total_started
@@ -856,8 +948,7 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
                 else "llm_unavailable"
             )
             logger.error(
-                "LLM call failed, switching to fallback: %s",
-                exc,
+                "LLM call failed, switching to fallback",
                 extra=log_extra(stage="llm", error_type=type(exc).__name__),
             )
             answer = (

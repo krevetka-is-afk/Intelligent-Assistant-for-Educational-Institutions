@@ -44,5 +44,8 @@ def test_sokolova_cases_keep_known_corpus_gaps_explicit():
 
     assert cases["sokolova-01-rector"].expected_documents == []
     assert cases["sokolova-14-admission-documents"].expected_documents == []
-    assert "MAX" in cases["sokolova-10-electronic-student-card-access"].reference_answer
-    assert "локальном DOCX" in cases["sokolova-10-electronic-student-card-access"].reference_note
+    card_access_case = cases["sokolova-10-electronic-student-card-access"]
+    assert card_access_case.reference_answer is not None
+    assert card_access_case.reference_note is not None
+    assert "MAX" in card_access_case.reference_answer
+    assert "локальном DOCX" in card_access_case.reference_note

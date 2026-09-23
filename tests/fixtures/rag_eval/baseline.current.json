@@ -1,0 +1,892 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-22T10:10:10.166947+00:00",
+  "rag_top_k": 4,
+  "baseline_top_n": 5,
+  "embedding_model": "cointegrated/rubert-tiny2",
+  "llm_model": "qwen2.5:3b",
+  "captures": [
+    {
+      "case_id": "disciplinary-actions-clean-core",
+      "question": "За какие конкретные действия можно получить дисциплинарное взыскание в ВШЭ?",
+      "conversation_history": [],
+      "retrieval_query": "За какие конкретные действия можно получить дисциплинарное взыскание в ВШЭ?",
+      "top_n": 5,
+      "candidates": [
+        {
+          "rank": 1,
+          "distance": 0.5615994930267334,
+          "metadata": {
+            "source": "student_handbook/student_movements/6.18.1-01_010923-26 Итоговый документ.docx",
+            "chunk_id": "524069ca64275e2b1bc18453:00034",
+            "title": "6.18.1-01_010923-26 Итоговый документ",
+            "char_end": 13740,
+            "document_id": "524069ca64275e2b1bc18453",
+            "char_start": 13600,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "chunk_index": 34
+          },
+          "expected_document_matches": [
+            "6.18.1-01"
+          ],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 2,
+          "distance": 0.5642058253288269,
+          "metadata": {
+            "char_start": 8800,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "chunk_id": "cebca247b2311f9d770a4f93:00022",
+            "source": "student_handbook/university_graduation/6.18-01_130224-5 Приложение 1.docx",
+            "title": "6.18-01_130224-5 Приложение 1",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "char_end": 9300,
+            "document_id": "cebca247b2311f9d770a4f93",
+            "chunk_index": 22
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 3,
+          "distance": 0.5683045387268066,
+          "metadata": {
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "char_start": 14000,
+            "chunk_index": 35,
+            "char_end": 14500,
+            "chunk_id": "538f61b060a1cacfc6fac650:00035",
+            "title": "FAQ_about_POPATKUS_revision",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "document_id": "538f61b060a1cacfc6fac650",
+            "source": "student_handbook/basic/FAQ_about_POPATKUS_revision.docx"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 4,
+          "distance": 0.5815685987472534,
+          "metadata": {
+            "source": "student_handbook/university_graduation/Приложение 8.docx",
+            "chunk_id": "36525fc9eab655e213cbbd52:00032",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "title": "Приложение 8",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "char_start": 12800,
+            "chunk_index": 32,
+            "char_end": 13300,
+            "document_id": "36525fc9eab655e213cbbd52"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 5,
+          "distance": 0.5829421281814575,
+          "metadata": {
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "document_id": "36525fc9eab655e213cbbd52",
+            "chunk_id": "36525fc9eab655e213cbbd52:00043",
+            "source": "student_handbook/university_graduation/Приложение 8.docx",
+            "chunk_index": 43,
+            "title": "Приложение 8",
+            "char_start": 17200,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "char_end": 17700
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        }
+      ],
+      "expected_document_ranks": {
+        "Правила внутреннего распорядка": null,
+        "Выписка УС 31.01.24": null,
+        "6.18.1-01": 1
+      },
+      "fallback_used": true,
+      "fallback_reason": "evaluation_answer_generator_not_configured",
+      "retrieval_time_ms": 90491,
+      "generation_time_ms": 0,
+      "total_time_ms": 90491,
+      "final_answer": "LLM временно недоступна, поэтому показываю наиболее релевантные фрагменты из найденных документов.\n\n1. ю структурного подразделения и руководству Университета для привлечения нарушителя к дисциплинарной ответственности в установленном порядке.\n\n2. лизующего образовательную программу, в котором указываются причина отчисления и конкретные действия (бездействие) обучающегося, послужившие (-ее) основанием для отчисления обучающегося. Порядок отчисления обучающихся за совершение дисциплинарных проступков опр...\n\n3. -пререквизитов. Образовавшиеся при такой отмене зачетов академические задолженности подлежат пересдаче в ближайший возможный период пересдач, установленный для этих элементов. Вопрос: Что такое КУД и зачем он вводится? Ответ: С помощью введения показателя каче...\n\n4. с локальными нормативными актами НИУ ВШЭ. Апелляция по курсовой работе осуществляется в порядке, установленном Положением об организации промежуточной аттестации и текущего контроля успеваемости студентов НИУ ВШЭ для апелляции по результатам экзамена. В случае..."
+    },
+    {
+      "case_id": "disciplinary-actions-clean-short",
+      "question": "За что могут объявить взыскание?",
+      "conversation_history": [],
+      "retrieval_query": "За что могут объявить взыскание?",
+      "top_n": 5,
+      "candidates": [
+        {
+          "rank": 1,
+          "distance": 0.8186118006706238,
+          "metadata": {
+            "chunk_id": "5ff3cf4e607e8937b3ba78cb:00004",
+            "title": "www-hse-ru-studyspravka-credit...",
+            "page": 2,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "char_start": 1331,
+            "source": "student_handbook/about_money/www-hse-ru-studyspravka-credit....pdf",
+            "document_id": "5ff3cf4e607e8937b3ba78cb",
+            "char_end": 1831,
+            "chunk_index": 4,
+            "mime_type": "application/pdf"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 2,
+          "distance": 0.8626948595046997,
+          "metadata": {
+            "char_start": 1731,
+            "mime_type": "application/pdf",
+            "char_end": 2231,
+            "document_id": "5ff3cf4e607e8937b3ba78cb",
+            "chunk_index": 5,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "chunk_id": "5ff3cf4e607e8937b3ba78cb:00005",
+            "title": "www-hse-ru-studyspravka-credit...",
+            "page": 2,
+            "source": "student_handbook/about_money/www-hse-ru-studyspravka-credit....pdf"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 3,
+          "distance": 0.8915317058563232,
+          "metadata": {
+            "chunk_index": 11,
+            "chunk_id": "98e94cd962d5dde1e56875c0:00011",
+            "document_id": "98e94cd962d5dde1e56875c0",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "char_end": 4900,
+            "title": "Легализация диплома НИУ ВШЭ",
+            "char_start": 4400,
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "source": "student_handbook/university_graduation/Легализация диплома НИУ ВШЭ.docx"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 4,
+          "distance": 0.9429574012756348,
+          "metadata": {
+            "chunk_index": 50,
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "char_end": 20500,
+            "title": "FAQ_about_POPATKUS_revision",
+            "source": "student_handbook/basic/FAQ_about_POPATKUS_revision.docx",
+            "chunk_id": "538f61b060a1cacfc6fac650:00050",
+            "char_start": 20000,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "document_id": "538f61b060a1cacfc6fac650"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 5,
+          "distance": 0.9504997134208679,
+          "metadata": {
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "source": "student_handbook/about_money/Образовательный кредит с государственной поддержкой.docx",
+            "char_end": 4100,
+            "title": "Образовательный кредит с государственной поддержкой",
+            "document_id": "f47cc96652f2d4511599dde9",
+            "chunk_index": 9,
+            "chunk_id": "f47cc96652f2d4511599dde9:00009",
+            "char_start": 3600,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        }
+      ],
+      "expected_document_ranks": {
+        "Правила внутреннего распорядка": null,
+        "Выписка УС 31.01.24": null,
+        "6.18.1-01": null
+      },
+      "fallback_used": true,
+      "fallback_reason": "evaluation_answer_generator_not_configured",
+      "retrieval_time_ms": 358,
+      "generation_time_ms": 0,
+      "total_time_ms": 358,
+      "final_answer": "LLM временно недоступна, поэтому показываю наиболее релевантные фрагменты из найденных документов.\n\n1. Кому может быть предоставлен кредит от ПАО \"Сбербанк\"? Льготные условия получения образовательного кредита Какие документы необходимы для оформления кредита? Куда можно обратиться для оформления кредита? Что делать при смене образовательной программы/уходе в а...\n\n2. господдержкой Кому может быть предоставлен кредит от АО «Т-БАНК»? Льготные условия получения образовательного кредита Какие документы необходимы для оформления кредита? Куда можно обратиться для оформления кредита? Что делать при смене образовательной программ...\n\n3. – приложение Дальнейшие действия Х Х Заверить диплом в посольстве страны легализации Могу ли я попросить друга сдать документы за себя? Да. Для этого нужна нотарильно заверенная доверенность на другое лицо. Обратите внимание, что доверенному лицу нужно иметь п...\n\n4. пуске. Это время также не учитывается при исчислении сроков. Вопрос: Отменяются ли ранее выставленные перезачеты в случае неявки студента на внешнюю оценку без уважительных причин? А с уважительными причинами? Ответ: Неявка по любой причине приравнивается в мо..."
+    },
+    {
+      "case_id": "disciplinary-actions-polluted-retake-history",
+      "question": "Какие действия приводят к дисциплинарке?",
+      "conversation_history": [
+        "Когда у меня первая пересдача?",
+        "А если я не пришел на экзамен?",
+        "Расскажи про повторное изучение дисциплины."
+      ],
+      "retrieval_query": "Когда у меня первая пересдача?\nА если я не пришел на экзамен?\nРасскажи про повторное изучение дисциплины.\nКакие действия приводят к дисциплинарке?",
+      "top_n": 5,
+      "candidates": [
+        {
+          "rank": 1,
+          "distance": 0.4841565191745758,
+          "metadata": {
+            "char_start": 24800,
+            "source": "student_handbook/feedback/Экосистема обратной связи.docx",
+            "char_end": 25300,
+            "chunk_index": 62,
+            "title": "Экосистема обратной связи",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "chunk_id": "746b4566f7266cb4b9e9df74:00062",
+            "document_id": "746b4566f7266cb4b9e9df74"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 2,
+          "distance": 0.5557287931442261,
+          "metadata": {
+            "char_end": 5300,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "chunk_id": "538f61b060a1cacfc6fac650:00012",
+            "title": "FAQ_about_POPATKUS_revision",
+            "char_start": 4800,
+            "source": "student_handbook/basic/FAQ_about_POPATKUS_revision.docx",
+            "chunk_index": 12,
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "document_id": "538f61b060a1cacfc6fac650"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 3,
+          "distance": 0.558840811252594,
+          "metadata": {
+            "char_start": 2000,
+            "char_end": 2500,
+            "title": "FAQ_about_POPATKUS_revision",
+            "chunk_id": "538f61b060a1cacfc6fac650:00005",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "source": "student_handbook/basic/FAQ_about_POPATKUS_revision.docx",
+            "document_id": "538f61b060a1cacfc6fac650",
+            "chunk_index": 5
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 4,
+          "distance": 0.5705872774124146,
+          "metadata": {
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "source": "student_handbook/basic/FAQ_about_POPATKUS_revision.docx",
+            "chunk_index": 52,
+            "chunk_id": "538f61b060a1cacfc6fac650:00052",
+            "title": "FAQ_about_POPATKUS_revision",
+            "char_end": 21300,
+            "char_start": 20800,
+            "document_id": "538f61b060a1cacfc6fac650"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 5,
+          "distance": 0.6012779474258423,
+          "metadata": {
+            "document_id": "746b4566f7266cb4b9e9df74",
+            "source": "student_handbook/feedback/Экосистема обратной связи.docx",
+            "char_end": 37300,
+            "title": "Экосистема обратной связи",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "char_start": 36800,
+            "chunk_id": "746b4566f7266cb4b9e9df74:00092",
+            "chunk_index": 92,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        }
+      ],
+      "expected_document_ranks": {
+        "Правила внутреннего распорядка": null,
+        "Выписка УС 31.01.24": null,
+        "6.18.1-01": null
+      },
+      "fallback_used": true,
+      "fallback_reason": "evaluation_answer_generator_not_configured",
+      "retrieval_time_ms": 80,
+      "generation_time_ms": 0,
+      "total_time_ms": 80,
+      "final_answer": "LLM временно недоступна, поэтому показываю наиболее релевантные фрагменты из найденных документов.\n\n1. ии по дисциплине. Числовые оценки в комментариях переписывать не нужно. Если в моей анкете нет дисциплины, которую я изучал(а)? Оставьте комментарии по ней в последнем вопросе анкеты — «Замечания и предложения относительно организации учебного процесса в целом...\n\n2. организована первая пересдача . Отложенная вторая пересдача возможна после повторного прослушивания курса и прохождения всех элементов текущего контроля. Подробнее о процессе переноса третьей сдачи и повторного изучения дисциплин. Вопрос: Переход на платное об...\n\n3. сли использование ИИ было явно запрещено преподавателем. Подробнее о проверке студенческих работ на плагиат. Вопрос: Что происходит с накопленной оценкой на комиссии (второй пересдаче) и почему она не \"обнуляется\"? Ответ: Не было нововведений в части накопител...\n\n4. действия, указанные в пункте 9), регулярно консультировался с преподавателями и учебными ассистентами по тем дисциплинам, по которым в итоге возникла академическая задолженность? Ответ: Не возможен. Вопрос: Считается ли попытка второй пересдачи использованной,..."
+    },
+    {
+      "case_id": "retake-periods-clean-core",
+      "question": "Когда периоды пересдач в ВШЭ?",
+      "conversation_history": [],
+      "retrieval_query": "Когда периоды пересдач в ВШЭ?",
+      "top_n": 5,
+      "candidates": [
+        {
+          "rank": 1,
+          "distance": 0.7733545303344727,
+          "metadata": {
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "title": "www-hse-ru-studyspravka-perbud...",
+            "chunk_index": 19,
+            "source": "student_handbook/about_money/www-hse-ru-studyspravka-perbud....pdf",
+            "chunk_id": "86e65bbcca3228128eb90325:00019",
+            "char_start": 7110,
+            "mime_type": "application/pdf",
+            "page": 5,
+            "char_end": 7450,
+            "document_id": "86e65bbcca3228128eb90325"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 2,
+          "distance": 0.7989469170570374,
+          "metadata": {
+            "chunk_index": 50,
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "chunk_id": "538f61b060a1cacfc6fac650:00050",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "document_id": "538f61b060a1cacfc6fac650",
+            "title": "FAQ_about_POPATKUS_revision",
+            "char_end": 20500,
+            "char_start": 20000,
+            "source": "student_handbook/basic/FAQ_about_POPATKUS_revision.docx"
+          },
+          "expected_document_matches": [
+            "student_handbook/basic"
+          ],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 3,
+          "distance": 0.8050170540809631,
+          "metadata": {
+            "source": "student_handbook/state_final_examination/Государственная итоговая аттестация.docx",
+            "char_end": 17700,
+            "title": "Государственная итоговая аттестация",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "document_id": "eea773ebd821fd2f5a7fee29",
+            "char_start": 17200,
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "chunk_id": "eea773ebd821fd2f5a7fee29:00043",
+            "chunk_index": 43
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 4,
+          "distance": 0.805938720703125,
+          "metadata": {
+            "char_start": 6800,
+            "char_end": 7300,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "chunk_id": "d006a8c81da939a4e9e1c650:00017",
+            "source": "student_handbook/student_movements/Академический отпуск.docx",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "document_id": "d006a8c81da939a4e9e1c650",
+            "chunk_index": 17,
+            "title": "Академический отпуск"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 5,
+          "distance": 0.8121278882026672,
+          "metadata": {
+            "chunk_id": "d006a8c81da939a4e9e1c650:00032",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "document_id": "d006a8c81da939a4e9e1c650",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "char_end": 13300,
+            "char_start": 12800,
+            "title": "Академический отпуск",
+            "source": "student_handbook/student_movements/Академический отпуск.docx",
+            "chunk_index": 32
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        }
+      ],
+      "expected_document_ranks": {
+        "Памятка студенту о первой пересдаче": null,
+        "Памятка студенту отдельной категории о первой пересдаче": null,
+        "Перенос второй пересдачи дисциплины и ее повторное изучение": null,
+        "student_handbook/basic": 2
+      },
+      "fallback_used": true,
+      "fallback_reason": "evaluation_answer_generator_not_configured",
+      "retrieval_time_ms": 245,
+      "generation_time_ms": 0,
+      "total_time_ms": 246,
+      "final_answer": "LLM временно недоступна, поэтому показываю наиболее релевантные фрагменты из найденных документов.\n\n1. оличество вакантных целевых мест для перехода? Количество вакантных целевых мест определяется как разница между числом студентов, обучавшихся на целевых бюджетных местах на дату завершения предыдущей Кампании (либо на дату поступления в НИУ ВШЭ для зимней камп...\n\n2. пуске. Это время также не учитывается при исчислении сроков. Вопрос: Отменяются ли ранее выставленные перезачеты в случае неявки студента на внешнюю оценку без уважительных причин? А с уважительными причинами? Ответ: Неявка по любой причине приравнивается в мо...\n\n3. исе Может ли студент изменить тему ВКР? Да, может. Изменение темы ВКР возможно не позднее, чем за один календарный месяц до установленного в приказе срока представления итогового варианта ВКР и по процедурам, установленным ОП. Изменение темы ВКР производится п...\n\n4. транном университете? Если вы планируете учиться в течение семестра или года в зарубежном университете, то вам нужно использовать другой механизм – академическую мобильность. Вам составят индивидуальный учебный план, включающий дисциплины иностранного универси..."
+    },
+    {
+      "case_id": "retake-periods-clean-short",
+      "question": "А когда пересдачи?",
+      "conversation_history": [],
+      "retrieval_query": "А когда пересдачи?",
+      "top_n": 5,
+      "candidates": [
+        {
+          "rank": 1,
+          "distance": 1.0496865510940552,
+          "metadata": {
+            "source": "student_handbook/basic/FAQ_about_POPATKUS_revision.docx",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "title": "FAQ_about_POPATKUS_revision",
+            "document_id": "538f61b060a1cacfc6fac650",
+            "chunk_id": "538f61b060a1cacfc6fac650:00050",
+            "chunk_index": 50,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "char_end": 20500,
+            "char_start": 20000
+          },
+          "expected_document_matches": [
+            "student_handbook/basic"
+          ],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 2,
+          "distance": 1.0634779930114746,
+          "metadata": {
+            "chunk_index": 62,
+            "char_start": 24800,
+            "char_end": 25300,
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "chunk_id": "746b4566f7266cb4b9e9df74:00062",
+            "document_id": "746b4566f7266cb4b9e9df74",
+            "source": "student_handbook/feedback/Экосистема обратной связи.docx",
+            "title": "Экосистема обратной связи",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 3,
+          "distance": 1.0997374057769775,
+          "metadata": {
+            "page": 4,
+            "char_end": 8320,
+            "source": "student_handbook/feedback/Протокол 20250421.pdf",
+            "chunk_index": 21,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "chunk_id": "c0e89bd2416dd57d7e96ecee:00021",
+            "char_start": 7820,
+            "document_id": "c0e89bd2416dd57d7e96ecee",
+            "title": "Протокол 20250421",
+            "mime_type": "application/pdf"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 4,
+          "distance": 1.1000690460205078,
+          "metadata": {
+            "char_end": 32100,
+            "chunk_id": "746b4566f7266cb4b9e9df74:00079",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "document_id": "746b4566f7266cb4b9e9df74",
+            "title": "Экосистема обратной связи",
+            "chunk_index": 79,
+            "source": "student_handbook/feedback/Экосистема обратной связи.docx",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "char_start": 31600
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 5,
+          "distance": 1.1011781692504883,
+          "metadata": {
+            "page": 6,
+            "mime_type": "application/pdf",
+            "chunk_index": 45,
+            "source": "student_handbook/feedback/Протокол 20250312 (1).pdf",
+            "document_id": "2ac9f6a328e52df0adfb289f",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "title": "Протокол 20250312 (1)",
+            "char_start": 17490,
+            "chunk_id": "2ac9f6a328e52df0adfb289f:00045",
+            "char_end": 17990
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        }
+      ],
+      "expected_document_ranks": {
+        "Памятка студенту о первой пересдаче": null,
+        "Памятка студенту отдельной категории о первой пересдаче": null,
+        "Перенос второй пересдачи дисциплины и ее повторное изучение": null,
+        "student_handbook/basic": 1
+      },
+      "fallback_used": true,
+      "fallback_reason": "evaluation_answer_generator_not_configured",
+      "retrieval_time_ms": 324,
+      "generation_time_ms": 0,
+      "total_time_ms": 324,
+      "final_answer": "LLM временно недоступна, поэтому показываю наиболее релевантные фрагменты из найденных документов.\n\n1. пуске. Это время также не учитывается при исчислении сроков. Вопрос: Отменяются ли ранее выставленные перезачеты в случае неявки студента на внешнюю оценку без уважительных причин? А с уважительными причинами? Ответ: Неявка по любой причине приравнивается в мо...\n\n2. ии по дисциплине. Числовые оценки в комментариях переписывать не нужно. Если в моей анкете нет дисциплины, которую я изучал(а)? Оставьте комментарии по ней в последнем вопросе анкеты — «Замечания и предложения относительно организации учебного процесса в целом...\n\n3. ие используются источники трафика для продвижения постов и изучаются ли метрики. Бонай А.Х. – с ответом Никитину Я.В. о том, что продвижения производится совместно с пиар-блоком Вышки, например, через каналы «Вышка для своих», «Экстра» и так далее, однако толь...\n\n4. ще подачи материала. Когда вы будете оценивать работу преподавателя, не забывайте о его вкладе в раскрытие дисциплины — это поможет ему понять, где стоит развивать свои преподавательские, а где — методические навыки. 4. Иногда вещи, которые кажутся вам очевидн..."
+    },
+    {
+      "case_id": "retake-periods-clean-rephrased",
+      "question": "В какие сроки проходят первая и вторая пересдача?",
+      "conversation_history": [],
+      "retrieval_query": "В какие сроки проходят первая и вторая пересдача?",
+      "top_n": 5,
+      "candidates": [
+        {
+          "rank": 1,
+          "distance": 0.6349195241928101,
+          "metadata": {
+            "title": "FAQ_about_POPATKUS_revision",
+            "source": "student_handbook/basic/FAQ_about_POPATKUS_revision.docx",
+            "chunk_id": "538f61b060a1cacfc6fac650:00011",
+            "document_id": "538f61b060a1cacfc6fac650",
+            "chunk_index": 11,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "char_end": 4900,
+            "char_start": 4400
+          },
+          "expected_document_matches": [
+            "student_handbook/basic"
+          ],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 2,
+          "distance": 0.6481971740722656,
+          "metadata": {
+            "chunk_id": "538f61b060a1cacfc6fac650:00012",
+            "char_end": 5300,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "title": "FAQ_about_POPATKUS_revision",
+            "source": "student_handbook/basic/FAQ_about_POPATKUS_revision.docx",
+            "char_start": 4800,
+            "document_id": "538f61b060a1cacfc6fac650",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "chunk_index": 12
+          },
+          "expected_document_matches": [
+            "student_handbook/basic"
+          ],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 3,
+          "distance": 0.6592521667480469,
+          "metadata": {
+            "chunk_index": 13,
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "chunk_id": "538f61b060a1cacfc6fac650:00013",
+            "title": "FAQ_about_POPATKUS_revision",
+            "char_start": 5200,
+            "document_id": "538f61b060a1cacfc6fac650",
+            "char_end": 5700,
+            "source": "student_handbook/basic/FAQ_about_POPATKUS_revision.docx"
+          },
+          "expected_document_matches": [
+            "student_handbook/basic"
+          ],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 4,
+          "distance": 0.6750267744064331,
+          "metadata": {
+            "document_id": "a7abde4c09444e61840bd98e",
+            "chunk_index": 247,
+            "title": "Regulation",
+            "char_end": 99300,
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "chunk_id": "a7abde4c09444e61840bd98e:00247",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "char_start": 98800,
+            "source": "Regulation.docx"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 5,
+          "distance": 0.7379306554794312,
+          "metadata": {
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "document_id": "a7abde4c09444e61840bd98e",
+            "char_start": 96000,
+            "chunk_index": 240,
+            "chunk_id": "a7abde4c09444e61840bd98e:00240",
+            "char_end": 96500,
+            "source": "Regulation.docx",
+            "title": "Regulation",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        }
+      ],
+      "expected_document_ranks": {
+        "Памятка студенту о первой пересдаче": null,
+        "Памятка студенту отдельной категории о первой пересдаче": null,
+        "Перенос второй пересдачи дисциплины и ее повторное изучение": null,
+        "student_handbook/basic": 1
+      },
+      "fallback_used": true,
+      "fallback_reason": "evaluation_answer_generator_not_configured",
+      "retrieval_time_ms": 255,
+      "generation_time_ms": 0,
+      "total_time_ms": 255,
+      "final_answer": "LLM временно недоступна, поэтому показываю наиболее релевантные фрагменты из найденных документов.\n\n1. овторное изучение будет предоставляться только студентам, у которых академ.задолженность не более, чем по двум дисциплинам. Что нового: студенты после первой пересдачи должны будут принять ответственное решение — идти на вторую пересдачу в текущий период или п...\n\n2. организована первая пересдача . Отложенная вторая пересдача возможна после повторного прослушивания курса и прохождения всех элементов текущего контроля. Подробнее о процессе переноса третьей сдачи и повторного изучения дисциплин. Вопрос: Переход на платное об...\n\n3. силы на второй пересдаче, так и отложить ее, чтобы не рисковать отчислением при получении неудовлетворительной оценки, сдавая экзамен в третий раз. Таким образом, у каждого студента есть следующие два сценария, когда вы сдали экзамен во второй раз, получив на...\n\n4. ном, сдаваемым комиссии, в статусе третьей (последней) сдачи (второй пересдачи) не позднее, чем в период пересдач, который состоится через 1 (один) календарный год после периода, в которой была организована первая пересдача. Если студент после повторного изуче..."
+    },
+    {
+      "case_id": "retake-periods-polluted-discipline-history",
+      "question": "Когда периоды пересдач в ВШЭ?",
+      "conversation_history": [
+        "За какие действия можно получить дисциплинарное взыскание?",
+        "Какие бывают взыскания?",
+        "Расскажи про правила внутреннего распорядка."
+      ],
+      "retrieval_query": "За какие действия можно получить дисциплинарное взыскание?\nКакие бывают взыскания?\nРасскажи про правила внутреннего распорядка.\nКогда периоды пересдач в ВШЭ?",
+      "top_n": 5,
+      "candidates": [
+        {
+          "rank": 1,
+          "distance": 0.5339677333831787,
+          "metadata": {
+            "chunk_id": "538f61b060a1cacfc6fac650:00035",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "char_end": 14500,
+            "title": "FAQ_about_POPATKUS_revision",
+            "char_start": 14000,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "chunk_index": 35,
+            "document_id": "538f61b060a1cacfc6fac650",
+            "source": "student_handbook/basic/FAQ_about_POPATKUS_revision.docx"
+          },
+          "expected_document_matches": [
+            "student_handbook/basic"
+          ],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 2,
+          "distance": 0.5803790092468262,
+          "metadata": {
+            "char_end": 20500,
+            "document_id": "538f61b060a1cacfc6fac650",
+            "source": "student_handbook/basic/FAQ_about_POPATKUS_revision.docx",
+            "chunk_id": "538f61b060a1cacfc6fac650:00050",
+            "chunk_index": 50,
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "char_start": 20000,
+            "title": "FAQ_about_POPATKUS_revision"
+          },
+          "expected_document_matches": [
+            "student_handbook/basic"
+          ],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 3,
+          "distance": 0.5891196727752686,
+          "metadata": {
+            "mime_type": "application/pdf",
+            "source": "student_handbook/about_money/www-hse-ru-studyspravka-credit....pdf",
+            "chunk_id": "5ff3cf4e607e8937b3ba78cb:00004",
+            "title": "www-hse-ru-studyspravka-credit...",
+            "chunk_index": 4,
+            "char_start": 1331,
+            "document_id": "5ff3cf4e607e8937b3ba78cb",
+            "char_end": 1831,
+            "page": 2,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 4,
+          "distance": 0.6061489582061768,
+          "metadata": {
+            "chunk_id": "f47cc96652f2d4511599dde9:00009",
+            "source": "student_handbook/about_money/Образовательный кредит с государственной поддержкой.docx",
+            "title": "Образовательный кредит с государственной поддержкой",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "chunk_index": 9,
+            "char_start": 3600,
+            "char_end": 4100,
+            "document_id": "f47cc96652f2d4511599dde9",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 5,
+          "distance": 0.6062813997268677,
+          "metadata": {
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "char_end": 3700,
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "chunk_index": 8,
+            "source": "student_handbook/about_money/Образовательный кредит с государственной поддержкой.docx",
+            "char_start": 3200,
+            "title": "Образовательный кредит с государственной поддержкой",
+            "document_id": "f47cc96652f2d4511599dde9",
+            "chunk_id": "f47cc96652f2d4511599dde9:00008"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        }
+      ],
+      "expected_document_ranks": {
+        "Памятка студенту о первой пересдаче": null,
+        "Памятка студенту отдельной категории о первой пересдаче": null,
+        "Перенос второй пересдачи дисциплины и ее повторное изучение": null,
+        "student_handbook/basic": 1
+      },
+      "fallback_used": true,
+      "fallback_reason": "evaluation_answer_generator_not_configured",
+      "retrieval_time_ms": 20,
+      "generation_time_ms": 0,
+      "total_time_ms": 20,
+      "final_answer": "LLM временно недоступна, поэтому показываю наиболее релевантные фрагменты из найденных документов.\n\n1. -пререквизитов. Образовавшиеся при такой отмене зачетов академические задолженности подлежат пересдаче в ближайший возможный период пересдач, установленный для этих элементов. Вопрос: Что такое КУД и зачем он вводится? Ответ: С помощью введения показателя каче...\n\n2. пуске. Это время также не учитывается при исчислении сроков. Вопрос: Отменяются ли ранее выставленные перезачеты в случае неявки студента на внешнюю оценку без уважительных причин? А с уважительными причинами? Ответ: Неявка по любой причине приравнивается в мо...\n\n3. Кому может быть предоставлен кредит от ПАО \"Сбербанк\"? Льготные условия получения образовательного кредита Какие документы необходимы для оформления кредита? Куда можно обратиться для оформления кредита? Что делать при смене образовательной программы/уходе в а...\n\n4. вуз и иных ситуациях? Вы можете изменить условия по действующему образовательному кредиту — увеличить кредитный лимит или срок льготного периода. Подробная информация о причинах изменения условий по кредиту и действиях по изменению условий по ссылке: https://w..."
+    },
+    {
+      "case_id": "retake-periods-polluted-discipline-history-short",
+      "question": "А по срокам пересдач?",
+      "conversation_history": [
+        "Мне нужно узнать про дисциплинарные взыскания.",
+        "За что можно получить выговор?",
+        "Какие документы регулируют дисциплинарку?"
+      ],
+      "retrieval_query": "Мне нужно узнать про дисциплинарные взыскания.\nЗа что можно получить выговор?\nКакие документы регулируют дисциплинарку?\nА по срокам пересдач?",
+      "top_n": 5,
+      "candidates": [
+        {
+          "rank": 1,
+          "distance": 0.5592387914657593,
+          "metadata": {
+            "document_id": "538f61b060a1cacfc6fac650",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "source": "student_handbook/basic/FAQ_about_POPATKUS_revision.docx",
+            "chunk_id": "538f61b060a1cacfc6fac650:00035",
+            "char_end": 14500,
+            "chunk_index": 35,
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "char_start": 14000,
+            "title": "FAQ_about_POPATKUS_revision"
+          },
+          "expected_document_matches": [
+            "student_handbook/basic"
+          ],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 2,
+          "distance": 0.5766002535820007,
+          "metadata": {
+            "char_end": 6900,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "source": "student_handbook/university_graduation/Легализация диплома НИУ ВШЭ.docx",
+            "title": "Легализация диплома НИУ ВШЭ",
+            "chunk_index": 16,
+            "chunk_id": "98e94cd962d5dde1e56875c0:00016",
+            "document_id": "98e94cd962d5dde1e56875c0",
+            "char_start": 6400,
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 3,
+          "distance": 0.5817584991455078,
+          "metadata": {
+            "chunk_id": "5ff3cf4e607e8937b3ba78cb:00004",
+            "mime_type": "application/pdf",
+            "char_end": 1831,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "page": 2,
+            "source": "student_handbook/about_money/www-hse-ru-studyspravka-credit....pdf",
+            "chunk_index": 4,
+            "char_start": 1331,
+            "document_id": "5ff3cf4e607e8937b3ba78cb",
+            "title": "www-hse-ru-studyspravka-credit..."
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 4,
+          "distance": 0.5972828269004822,
+          "metadata": {
+            "document_id": "746b4566f7266cb4b9e9df74",
+            "title": "Экосистема обратной связи",
+            "char_start": 36800,
+            "char_end": 37300,
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "source": "student_handbook/feedback/Экосистема обратной связи.docx",
+            "chunk_id": "746b4566f7266cb4b9e9df74:00092",
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "chunk_index": 92
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        },
+        {
+          "rank": 5,
+          "distance": 0.6024976372718811,
+          "metadata": {
+            "title": "ПВРО 2024",
+            "char_end": 29700,
+            "source": "student_handbook/university_graduation/ПВРО 2024.docx",
+            "chunk_id": "2a3f802b9ea68a639b90fefe:00073",
+            "char_start": 29200,
+            "document_id": "2a3f802b9ea68a639b90fefe",
+            "chunk_index": 73,
+            "indexed_at": "2026-03-30T17:25:34.838042+00:00",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          },
+          "expected_document_matches": [],
+          "forbidden_cluster_matches": []
+        }
+      ],
+      "expected_document_ranks": {
+        "Памятка студенту о первой пересдаче": null,
+        "Памятка студенту отдельной категории о первой пересдаче": null,
+        "Перенос второй пересдачи дисциплины и ее повторное изучение": null,
+        "student_handbook/basic": 1
+      },
+      "fallback_used": true,
+      "fallback_reason": "evaluation_answer_generator_not_configured",
+      "retrieval_time_ms": 20,
+      "generation_time_ms": 0,
+      "total_time_ms": 20,
+      "final_answer": "LLM временно недоступна, поэтому показываю наиболее релевантные фрагменты из найденных документов.\n\n1. -пререквизитов. Образовавшиеся при такой отмене зачетов академические задолженности подлежат пересдаче в ближайший возможный период пересдач, установленный для этих элементов. Вопрос: Что такое КУД и зачем он вводится? Ответ: С помощью введения показателя каче...\n\n2. е страны легализации. Перечень необходимых документов и сроки исполнения варьируются в зависимости от консульства Как мне легализовать диплом, если я иностранный студент и нахожусь за рубежом? Если вам требуется пройти процедуру легализации диплома, и вы наход...\n\n3. Кому может быть предоставлен кредит от ПАО \"Сбербанк\"? Льготные условия получения образовательного кредита Какие документы необходимы для оформления кредита? Куда можно обратиться для оформления кредита? Что делать при смене образовательной программы/уходе в а...\n\n4. перативный способ сообщить преподавателю и руководству образовательной программы о проблемах, которые могут встретиться в организации курса, или о новых темах, с которыми дисциплина станет ещё полезнее 2. Вспомните пояснения к открытым вопросам у завершенных д..."
+    }
+  ]
+}

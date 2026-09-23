@@ -40,7 +40,12 @@ def clear_vector_cache() -> None:
 def get_embedding_function() -> HuggingFaceEmbeddings:
     global _embedding_function
     if _embedding_function is None:
-        _embedding_function = HuggingFaceEmbeddings(model_name=config.HF_EMBEDDING_MODEL)
+        embedding_kwargs = {"normalize_embeddings": config.HF_EMBEDDING_NORMALIZE}
+        _embedding_function = HuggingFaceEmbeddings(
+            model=config.HF_EMBEDDING_MODEL,
+            encode_kwargs=embedding_kwargs,
+            query_encode_kwargs=embedding_kwargs,
+        )
     return _embedding_function
 
 

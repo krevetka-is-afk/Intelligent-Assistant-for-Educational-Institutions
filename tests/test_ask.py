@@ -6,8 +6,9 @@ import pytest
 from langchain_core.documents import Document
 from starlette.testclient import TestClient
 
-from src.server.app.ask_service import _conversation_memory_key_for_success
+from src.server.app.ask_service import _conversation_memory_key_for_success, policy_audit_logger
 from src.server.app.main import app, conversation_memory_store
+from src.server.app.prompt_policy import AnswerPolicyAudit
 from src.server.app.rag import RAGResponse
 from src.server.app.vector import EmptyVectorStoreError, VectorStoreUnavailableError
 
@@ -782,6 +783,85 @@ def test_policy_output_violation_does_not_change_web_history(client, monkeypatch
     assert refused.json()["metadata"]["fallback_reason"] == "policy_output_violation"
     assert accepted.status_code == 200
     assert captured_histories == [[], []]
+
+
+def test_policy_output_violation_metadata_includes_request_id(client, monkeypatch, bootstrap_token):
+    async def policy_violation(
+        question: str, conversation_history: list[str] | None = None
+    ) -> RAGResponse:
+        del question, conversation_history
+        return _policy_refused_response(
+            "policy_output_violation",
+            policy_output_violation_reason="unverified_url",
+            policy_output_violation_match_counts={"unverified_url": 1},
+        )
+
+    monkeypatch.setattr("src.server.app.main.ask_question", policy_violation)
+    assert _bootstrap_admin(client, bootstrap_token).status_code == 303
+
+    response = client.post("/web/ask", json={"question": "Вопрос с неподтвержденной ссылкой"})
+
+    assert response.status_code == 200
+    assert re.fullmatch(
+        r"[0-9a-f]{12}",
+        response.json()["metadata"]["policy_output_request_id"],
+    )
+
+
+def test_policy_output_audit_logs_hash_without_raw_question_or_history(
+    client, monkeypatch, bootstrap_token, caplog
+):
+    audit_records: list[logging.LogRecord] = []
+
+    class _AuditHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            audit_records.append(record)
+
+    async def answer_or_policy_violation(
+        question: str, conversation_history: list[str] | None = None
+    ) -> RAGResponse:
+        if "неподтвержденный URL" not in question:
+            return _rag_response()
+        assert conversation_history == ["История с SECRET_HISTORY_TOKEN"]
+        return RAGResponse(
+            answer="Безопасный отказ",
+            sources=[],
+            metadata=_rag_metadata(
+                fallback_used=True,
+                fallback_reason="policy_output_violation",
+                policy_output_violation_reason="unverified_url",
+                policy_output_violation_match_counts={"unverified_url": 1},
+            ),
+            retrieved_documents=[],
+            policy_audit=AnswerPolicyAudit(
+                answer_sha256="a" * 64,
+                pattern_ids=("unverified_url:url:0",),
+            ),
+        )
+
+    monkeypatch.setattr("src.server.app.main.ask_question", answer_or_policy_violation)
+    assert _bootstrap_admin(client, bootstrap_token).status_code == 303
+    audit_handler = _AuditHandler()
+    policy_audit_logger.addHandler(audit_handler)
+
+    try:
+        with caplog.at_level(logging.INFO):
+            stored = client.post("/web/ask", json={"question": "История с SECRET_HISTORY_TOKEN"})
+            audited = client.post(
+                "/web/ask",
+                json={"question": "Вопрос с неподтвержденный URL https://evil.example/rules.pdf"},
+            )
+    finally:
+        policy_audit_logger.removeHandler(audit_handler)
+
+    assert stored.status_code == 200
+    assert audited.status_code == 200
+    audit_text = "\n".join(record.getMessage() for record in audit_records)
+    combined_logs = caplog.text + audit_text
+    assert "a" * 64 in audit_text
+    assert "unverified_url:url:0" in audit_text
+    assert "SECRET_HISTORY_TOKEN" not in combined_logs
+    assert "https://evil.example/rules.pdf" not in combined_logs
 
 
 def test_successful_fallback_is_stored_exactly_once(client, monkeypatch, bootstrap_token):

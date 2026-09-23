@@ -89,13 +89,22 @@ def test_hybrid_retrieval_uses_unweighted_rrf_and_exact_chunk_dedupe(monkeypatch
     retrieved, metadata, diagnostics = rag.retrieve_documents("beta", k=3)
 
     assert [item.document.metadata["chunk_id"] for item in retrieved] == ["b:0", "a:0", "c:0"]
-    assert metadata == {
-        "retrieval_strategy": "hybrid",
-        "retrieval_candidate_pool_size": 4,
-        "retrieval_dense_candidate_count": 2,
-        "retrieval_lexical_candidate_count": 2,
-        "retrieval_lexical_available": True,
-    }
+    assert (
+        metadata.items()
+        >= {
+            "retrieval_strategy": "hybrid",
+            "retrieval_candidate_pool_size": 4,
+            "retrieval_dense_candidate_count": 2,
+            "retrieval_lexical_candidate_count": 2,
+            "retrieval_lexical_available": True,
+            "retrieval_query_count": 1,
+            "retrieval_rewrite_used": False,
+            "retrieval_original_dense_candidate_count": 2,
+            "retrieval_original_lexical_candidate_count": 2,
+            "retrieval_expanded_dense_candidate_count": 0,
+            "retrieval_expanded_lexical_candidate_count": 0,
+        }.items()
+    )
     assert diagnostics["candidate_count"] == 3
     assert retrieved[0]._retrieval_diagnostics["channel_ranks"] == {"dense": 2, "lexical": 1}
     assert retrieved[0]._retrieval_diagnostics["channels"] == ["dense", "lexical"]

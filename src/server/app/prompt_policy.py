@@ -66,6 +66,7 @@ _CONTROL_LEAK_PATTERNS = (
     re.compile(r"\b(system|developer)\s+(prompt|message|instruction|rules?)\b", re.I),
     re.compile(r"(системн\w+\s+(промпт|сообщен|инструкц|правил))", re.I),
     re.compile(r"\b(api[_ -]?key|secret|token|cookie|database_url|connection\s*string)\b", re.I),
+    re.compile(r"\b(?:untrusted_documents|untrusted_history|user_question|policy_version)\b", re.I),
 )
 _SOURCE_REFERENCE_PATTERN = re.compile(
     r"(?:\[(?P<bracket>\d{1,3})\])|"
