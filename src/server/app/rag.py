@@ -26,7 +26,7 @@ from .prompt_policy import (
     build_source_allowlist,
     evaluate_answer_policy,
 )
-from .vector import RetrievedDocument, similarity_search
+from .vector import RetrievedDocument, get_chunks_by_ids, similarity_search
 
 _search_lexical: Callable[..., Any] | None
 try:
@@ -179,6 +179,276 @@ def build_context(retrieved_documents: list[RetrievedDocument]) -> str:
             f"[{index}] {title}{location}\n{retrieved.document.page_content.strip()}"
         )
     return "\n\n".join(context_parts)
+
+
+def _metadata_int(metadata: dict[str, Any], key: str) -> int | None:
+    value = metadata.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        if not value.isdecimal():
+            return None
+        return int(value)
+    try:
+        integer = int(value)
+    except (TypeError, ValueError):
+        return None
+    return integer if integer == value else None
+
+
+def _trusted_anchor_metadata(
+    metadata: dict[str, Any],
+) -> tuple[str, str, Any, int, int, int] | None:
+    document_id = metadata.get("document_id")
+    source_sha256 = metadata.get("source_sha256")
+    page = metadata.get("page")
+    chunk_index = _metadata_int(metadata, "chunk_index")
+    char_start = _metadata_int(metadata, "char_start")
+    char_end = _metadata_int(metadata, "char_end")
+    if (
+        not isinstance(document_id, str)
+        or not document_id
+        or not isinstance(source_sha256, str)
+        or not source_sha256
+        or chunk_index is None
+        or chunk_index < 0
+        or char_start is None
+        or char_end is None
+        or char_start < 0
+        or char_end <= char_start
+    ):
+        return None
+    return document_id, source_sha256, page, chunk_index, char_start, char_end
+
+
+def _chunk_id(document_id: str, chunk_index: int) -> str:
+    return f"{document_id}:{chunk_index:05d}"
+
+
+def _same_chunk_version(
+    metadata: dict[str, Any],
+    *,
+    document_id: str,
+    source_sha256: str,
+    page: Any,
+    chunk_index: int,
+) -> bool:
+    return (
+        metadata.get("document_id") == document_id
+        and metadata.get("source_sha256") == source_sha256
+        and metadata.get("page") == page
+        and _metadata_int(metadata, "chunk_index") == chunk_index
+    )
+
+
+def _trusted_neighbor_order(
+    previous_metadata: dict[str, Any],
+    anchor_metadata: dict[str, Any],
+    next_metadata: dict[str, Any],
+) -> bool:
+    previous_start = _metadata_int(previous_metadata, "char_start")
+    previous_end = _metadata_int(previous_metadata, "char_end")
+    anchor_start = _metadata_int(anchor_metadata, "char_start")
+    anchor_end = _metadata_int(anchor_metadata, "char_end")
+    next_start = _metadata_int(next_metadata, "char_start")
+    next_end = _metadata_int(next_metadata, "char_end")
+    if None in {
+        previous_start,
+        previous_end,
+        anchor_start,
+        anchor_end,
+        next_start,
+        next_end,
+    }:
+        return False
+    assert previous_start is not None
+    assert previous_end is not None
+    assert anchor_start is not None
+    assert anchor_end is not None
+    assert next_start is not None
+    assert next_end is not None
+    return (
+        previous_start < previous_end
+        and anchor_start < anchor_end
+        and next_start < next_end
+        and previous_start < anchor_start
+        and previous_end >= anchor_start
+        and previous_end <= anchor_end
+        and next_start >= anchor_start
+        and anchor_end >= next_start
+        and anchor_end < next_end
+    )
+
+
+def _prefix_suffix_overlap(left: str, right: str) -> int:
+    max_length = min(len(left), len(right))
+    for length in range(max_length, 0, -1):
+        if left[-length:] == right[:length]:
+            return length
+    return 0
+
+
+def _merge_three_chunks(
+    previous: str,
+    anchor: str,
+    next_text: str,
+    *,
+    previous_overlap: int,
+    next_overlap: int,
+) -> tuple[str, int, int]:
+    merged = previous + anchor[previous_overlap:]
+    anchor_start = len(previous) - previous_overlap
+    anchor_end = anchor_start + len(anchor)
+    merged += next_text[next_overlap:]
+    return merged, anchor_start, anchor_end
+
+
+def _clip_preserving_anchor(
+    text: str, *, anchor_start: int, anchor_end: int, limit: int
+) -> str | None:
+    if limit <= 0 or len(text) <= limit:
+        return text
+    anchor_length = anchor_end - anchor_start
+    if anchor_length > limit:
+        return None
+    if anchor_length == limit:
+        return text[anchor_start:anchor_end]
+
+    side_budget = limit - anchor_length
+    left_keep = min(anchor_start, side_budget // 2)
+    right_keep = min(len(text) - anchor_end, side_budget - left_keep)
+    left_keep = min(anchor_start, side_budget - right_keep)
+    start = anchor_start - left_keep
+    end = anchor_end + right_keep
+    return text[start:end]
+
+
+def _expanded_context_budget(document_count: int) -> int:
+    if document_count <= 0:
+        return 0
+    fair_total = max(1, config.RAG_MAX_TOTAL_CONTEXT_CHARS // document_count)
+    return min(config.RAG_MAX_DOCUMENT_CHARS, fair_total)
+
+
+def expand_context_documents_for_generation(
+    retrieved_documents: list[RetrievedDocument],
+) -> list[RetrievedDocument]:
+    if not config.RAG_CONTEXT_EXPANSION_ENABLED:
+        return retrieved_documents
+
+    prompt_documents = retrieved_documents[: config.RAG_MAX_CONTEXT_DOCUMENTS]
+    if not prompt_documents:
+        return retrieved_documents
+
+    budget = _expanded_context_budget(len(prompt_documents))
+    expanded: list[RetrievedDocument] = []
+    for retrieved in prompt_documents:
+        expanded.append(_expand_single_context_document(retrieved, content_limit=budget))
+    if len(retrieved_documents) > len(prompt_documents):
+        expanded.extend(retrieved_documents[len(prompt_documents) :])
+    return expanded
+
+
+def _expand_single_context_document(
+    retrieved: RetrievedDocument,
+    *,
+    content_limit: int,
+) -> RetrievedDocument:
+    metadata = retrieved.document.metadata if isinstance(retrieved.document.metadata, dict) else {}
+    trusted = _trusted_anchor_metadata(metadata)
+    if trusted is None:
+        return retrieved
+
+    document_id, source_sha256, page, chunk_index, _char_start, _char_end = trusted
+    if chunk_index == 0:
+        return retrieved
+
+    previous_id = _chunk_id(document_id, chunk_index - 1)
+    expected_anchor_id = _chunk_id(document_id, chunk_index)
+    anchor_id = metadata.get("chunk_id")
+    if anchor_id is not None and anchor_id != expected_anchor_id:
+        return retrieved
+    anchor_id = expected_anchor_id
+    next_id = _chunk_id(document_id, chunk_index + 1)
+    try:
+        chunks_by_id = get_chunks_by_ids([previous_id, anchor_id, next_id])
+    except Exception:
+        return retrieved
+
+    previous = chunks_by_id.get(previous_id)
+    anchor = chunks_by_id.get(anchor_id)
+    next_document = chunks_by_id.get(next_id)
+    if previous is None or anchor is None or next_document is None:
+        return retrieved
+    if str(anchor.page_content or "") != str(retrieved.document.page_content or ""):
+        return retrieved
+
+    previous_metadata = previous.metadata if isinstance(previous.metadata, dict) else {}
+    anchor_metadata = anchor.metadata if isinstance(anchor.metadata, dict) else {}
+    next_metadata = next_document.metadata if isinstance(next_document.metadata, dict) else {}
+    if not (
+        _same_chunk_version(
+            previous_metadata,
+            document_id=document_id,
+            source_sha256=source_sha256,
+            page=page,
+            chunk_index=chunk_index - 1,
+        )
+        and _same_chunk_version(
+            anchor_metadata,
+            document_id=document_id,
+            source_sha256=source_sha256,
+            page=page,
+            chunk_index=chunk_index,
+        )
+        and _same_chunk_version(
+            next_metadata,
+            document_id=document_id,
+            source_sha256=source_sha256,
+            page=page,
+            chunk_index=chunk_index + 1,
+        )
+        and _trusted_neighbor_order(previous_metadata, anchor_metadata, next_metadata)
+    ):
+        return retrieved
+
+    previous_text = str(previous.page_content or "")
+    anchor_text = str(anchor.page_content or "")
+    next_text = str(next_document.page_content or "")
+    previous_overlap = _prefix_suffix_overlap(previous_text, anchor_text)
+    next_overlap = _prefix_suffix_overlap(anchor_text, next_text)
+    if previous_overlap == 0 or next_overlap == 0:
+        return retrieved
+
+    merged, anchor_start, anchor_end = _merge_three_chunks(
+        previous_text,
+        anchor_text,
+        next_text,
+        previous_overlap=previous_overlap,
+        next_overlap=next_overlap,
+    )
+    clipped = _clip_preserving_anchor(
+        merged,
+        anchor_start=anchor_start,
+        anchor_end=anchor_end,
+        limit=content_limit,
+    )
+    if not clipped:
+        return retrieved
+
+    return RetrievedDocument(
+        document=Document(
+            page_content=clipped,
+            metadata=dict(metadata),
+            id=getattr(retrieved.document, "id", None),
+        ),
+        distance=retrieved.distance,
+        _retrieval_diagnostics=dict(retrieved._retrieval_diagnostics),
+    )
 
 
 def build_conversation_history(conversation_history: list[str] | None) -> str:
@@ -628,6 +898,20 @@ def invoke_llm(
     return invoke_llm_with_prompt(compiled_prompt)
 
 
+def compile_generation_prompt(
+    *,
+    question: str,
+    retrieved_documents: list[RetrievedDocument],
+    conversation_history: list[str] | None = None,
+) -> CompiledPrompt:
+    prompt_documents = expand_context_documents_for_generation(retrieved_documents)
+    return _prompt_compiler.compile(
+        question=question,
+        retrieved_documents=prompt_documents,
+        conversation_history=conversation_history,
+    )
+
+
 def invoke_llm_with_prompt(compiled_prompt: CompiledPrompt) -> str:
     chain = _get_llm_chain()
     system_message = compiled_prompt.messages[0][1]
@@ -842,6 +1126,19 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
         list(compiled_prompt.retrieved_documents),
         retrieved_documents,
     )
+    generation_documents = bounded_documents
+    if config.RAG_CONTEXT_EXPANSION_ENABLED:
+        expanded_documents = expand_context_documents_for_generation(retrieved_documents)
+        if any(
+            expanded is not original
+            for expanded, original in zip(expanded_documents, retrieved_documents)
+        ):
+            generation_prompt = _prompt_compiler.compile(
+                question=question,
+                retrieved_documents=expanded_documents,
+                conversation_history=conversation_history,
+            )
+            generation_documents = list(generation_prompt.retrieved_documents)
     sources = deduplicate_sources(bounded_documents)
     source_allowlist = build_source_allowlist(sources)
     generation_elapsed = 0.0
@@ -863,7 +1160,12 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
         generation_started = perf_counter()
         try:
             answer = await asyncio.wait_for(
-                asyncio.to_thread(invoke_llm, question, bounded_documents, conversation_history),
+                asyncio.to_thread(
+                    invoke_llm,
+                    question,
+                    generation_documents,
+                    conversation_history,
+                ),
                 timeout=llm_timeout,
             )
             if not answer:
@@ -901,7 +1203,7 @@ async def ask_question(question: str, conversation_history: list[str] | None = N
                                 asyncio.to_thread(
                                     invoke_llm,
                                     _build_repair_question(question),
-                                    bounded_documents,
+                                    generation_documents,
                                     conversation_history,
                                 ),
                                 timeout=repair_timeout,

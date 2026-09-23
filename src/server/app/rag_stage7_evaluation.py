@@ -468,6 +468,18 @@ def _invoke_answer(
             list(compiled_prompt.retrieved_documents),
             documents,
         )
+        if rag.config.RAG_CONTEXT_EXPANSION_ENABLED:
+            generation_prompt = rag.compile_generation_prompt(
+                question=question,
+                retrieved_documents=documents,
+                conversation_history=history,
+            )
+            prompt_documents = rag._attach_retrieval_diagnostics(
+                list(generation_prompt.retrieved_documents),
+                documents,
+            )
+        else:
+            prompt_documents = bounded_documents
         sources = rag.deduplicate_sources(bounded_documents)
         if replay_answer is not None:
             answer = replay_answer
@@ -475,7 +487,7 @@ def _invoke_answer(
             try:
                 if not llm_available:
                     raise RuntimeError("stage7_llm_not_available")
-                answer = rag.invoke_llm(question, bounded_documents, history)
+                answer = rag.invoke_llm(question, prompt_documents, history)
             except Exception as exc:
                 fallback_used = True
                 fallback_reason = f"llm_unavailable:{type(exc).__name__}"
@@ -499,9 +511,20 @@ def _invoke_answer(
             elif rag._allows_policy_repair(policy_result) and llm_available:
                 policy_repair_attempted = True
                 try:
+                    repair_documents = bounded_documents
+                    if rag.config.RAG_CONTEXT_EXPANSION_ENABLED:
+                        repair_prompt = rag.compile_generation_prompt(
+                            question=rag._build_repair_question(question),
+                            retrieved_documents=documents,
+                            conversation_history=history,
+                        )
+                        repair_documents = rag._attach_retrieval_diagnostics(
+                            list(repair_prompt.retrieved_documents),
+                            documents,
+                        )
                     repair_answer = rag.invoke_llm(
                         rag._build_repair_question(question),
-                        bounded_documents,
+                        repair_documents,
                         history,
                     )
                 except Exception:
@@ -545,7 +568,7 @@ def _invoke_answer(
         generation_elapsed = perf_counter() - generation_started
         return (
             answer,
-            bounded_documents,
+            prompt_documents,
             sources,
             fallback_used,
             fallback_reason,
@@ -882,6 +905,7 @@ def write_stage7_report(
             "rag_max_context_documents": config.RAG_MAX_CONTEXT_DOCUMENTS,
             "rag_max_document_chars": config.RAG_MAX_DOCUMENT_CHARS,
             "rag_max_total_context_chars": config.RAG_MAX_TOTAL_CONTEXT_CHARS,
+            "rag_context_expansion_enabled": config.RAG_CONTEXT_EXPANSION_ENABLED,
             "rag_max_history_messages": config.RAG_MAX_HISTORY_MESSAGES,
             "rag_max_history_chars": config.RAG_MAX_HISTORY_CHARS,
             "embedding_model": config.HF_EMBEDDING_MODEL,

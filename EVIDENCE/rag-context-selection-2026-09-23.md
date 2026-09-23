@@ -173,7 +173,7 @@ PYTHONPATH=. uv run python -m src.server.app.rag_context_selector_pilot \
 
 Текущая совокупная целевая проверка probe, selector и stage-7 evaluator: `20 passed` (`PYTHONPATH=. uv run pytest --noconftest -q tests/test_rag_context_retrieval_probe.py tests/test_rag_context_selector_pilot.py tests/test_rag_stage7_evaluation.py`). Из них `11 passed` — тесты селектора: реальная схема сохранённого probe, допустимые ID, ошибки JSON, пустой выбор, таймаут, инъекция в тексте кандидата, отсутствие raw вопроса/истории в логах и повтор из cache. Ruff, isort и focused `ty` прошли на новых файлах. Для независимого повторного LLM-прогона задайте новые пути `--output` и `--cache`: текущий cache хранит предыдущие ответы модели.
 
-Коммитов нет. Существующие изменения в рабочем дереве не откатывались.
+Существующие изменения в рабочем дереве не откатывались.
 
 ## Addendum 2026-09-23: ручная проверка кандидатов и reranker pilot
 
@@ -189,24 +189,38 @@ PYTHONPATH=. uv run python -m src.server.app.rag_context_selector_pilot \
 Поэтому production change для переформулировки/сокращения запроса не включался.
 
 Добавлен offline CrossEncoder pilot tool `rag_context_reranker_pilot.py` и
-покрыт 5 unit tests. Четырёхкейсный запуск с моделью не завершился за 180 секунд
-и не создал JSON-результат. После тайм-аута исправлены загрузка модели один раз
-на процесс и аргументы конструктора под установленную версию
-`sentence-transformers`; реальный модельный прогон не повторялся. Поэтому по
-reranker pilot нет quality claim и нет GO на включение.
+покрыт 5 unit tests. Первые холодные запуски с короткими лимитами не дали
+JSON-результата. После исправления загрузки модели и увеличения лимита до
+600 секунд четырёхкейсный прогон завершился за 550 555 мс. Результат сохранён
+в `.omx/reports/rag-context-selection-2026-09-23/reranker-pilot-4case.json`
+(SHA-256 `d57c0ed5aa2a4493d202126312ea09c8058b80d02af347d0059eceb7da35cf91`).
+Первый scoring включал холодную загрузку и обращение к Hugging Face Hub
+(550 285 мс); последующие в том же процессе заняли 86, 85 и 95 мс.
 
-Следующий ограниченный путь: сначала разметить answer-ready источник/факт на
-фиксированном наборе и holdout, затем отдельно измерять candidate recall в
-dense, lexical, hybrid/RRF и только после этого проверять reranker или другой
-retrieval-stage компонент. До появления повторяемого выигрыша на frozen cases
-и holdout production switch остаётся выключенным.
+Формальный expected-document Hit@4 на выбранных четырёх случаях вырос с
+0/4 до 2/4. Независимый просмотр top-4 дал **NO-GO**: дисциплинарный вопрос
+получил дубли мер взыскания вместо полного перечня действий; вопрос о сроках
+пересдач — фрагменты про рейтинги; на скидках выше действующих источников
+поднялся проект 2019–2020 годов; по общежитию возможен общий ответ, но для
+подробного ответа top-4 содержит узкие поправки. Генерация ответов для новых
+top-4, все 16 случаев и security/web/Telegram для реранкера не проверялись.
+Production-код не менялся, реранкер не включён.
 
-Воспроизводимый короткий повтор пилота после прогрева модели:
+Следующий ограниченный путь: разметить answer-ready источник/факт на
+фиксированном наборе и новом holdout, проверить общее подавление текстовых
+дублей, добавить в корпус подтверждённый статус редакции и только потом
+проверить ответы после отбора и security. `indexed_at` и год в имени файла
+не подтверждают, что редакция действует. До повторяемого выигрыша production
+switch остаётся выключенным.
+
+Воспроизведение из корня репозитория. Для холодного запуска модели задавайте
+внешнему оркестратору лимит с запасом, около 900 секунд, и сохраняйте журнал;
+150–180 секунд в этом окружении оказалось недостаточно:
 
 ```bash
 PYTHONPATH=. uv run pytest --noconftest -q tests/test_rag_context_reranker_pilot.py
-timeout 180 uv run python -m src.server.app.rag_context_reranker_pilot \
+PYTHONPATH=. uv run python -m src.server.app.rag_context_reranker_pilot \
   --main-probe .omx/reports/rag-context-selection-2026-09-23/probe.main.json \
   --holdout-probe .omx/reports/rag-context-selection-2026-09-23/probe.holdout.json \
-  --output .omx/reports/rag-context-selection-2026-09-23/reranker-pilot-4case.json
+  --output .omx/reports/rag-context-selection-2026-09-23/reranker-pilot-4case.reproduce.json
 ```
