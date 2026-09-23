@@ -110,6 +110,96 @@ def test_hybrid_retrieval_uses_unweighted_rrf_and_exact_chunk_dedupe(monkeypatch
     assert retrieved[0]._retrieval_diagnostics["channels"] == ["dense", "lexical"]
 
 
+def test_default_retrieval_mode_uses_hybrid(monkeypatch):
+    dense_documents = [
+        _retrieved("dense alpha", chunk_id="a:0", document_id="a", chunk_index=0, distance=0.1),
+    ]
+    lexical_documents = [
+        _LexicalResult(
+            document=_doc("lexical beta", chunk_id="b:0", document_id="b", chunk_index=0),
+            score=0.99,
+        ),
+    ]
+
+    monkeypatch.delattr(rag.config, "RAG_RETRIEVAL_MODE", raising=False)
+    monkeypatch.setattr(rag, "similarity_search", lambda question, k: dense_documents)
+    monkeypatch.setattr(
+        rag,
+        "search_lexical",
+        lambda query, *, limit, index_path=None: lexical_documents,
+    )
+    monkeypatch.setattr(rag.config, "RAG_CANDIDATE_POOL_SIZE", 2, raising=False)
+
+    retrieved, metadata, diagnostics = rag.retrieve_documents("beta", k=2)
+
+    assert {item.document.metadata["chunk_id"] for item in retrieved} == {"a:0", "b:0"}
+    assert metadata["retrieval_strategy"] == "hybrid"
+    assert metadata["retrieval_lexical_candidate_count"] == 1
+    assert diagnostics["strategy"] == "hybrid"
+
+
+def test_primary_dense_retrieval_skips_lexical_and_uses_ranker(monkeypatch):
+    dense_documents = [
+        _retrieved("d1 c0", chunk_id="d1:0", document_id="d1", chunk_index=0, distance=0.1),
+        _retrieved("d1 c1", chunk_id="d1:1", document_id="d1", chunk_index=1, distance=0.11),
+        _retrieved("d2 c0", chunk_id="d2:0", document_id="d2", chunk_index=0, distance=0.12),
+        _retrieved("d1 c2", chunk_id="d1:2", document_id="d1", chunk_index=2, distance=0.13),
+    ]
+
+    def fail_lexical(*args, **kwargs):
+        raise AssertionError("primary_dense must not call lexical search")
+
+    monkeypatch.setattr(rag.config, "RAG_RETRIEVAL_MODE", "primary_dense", raising=False)
+    monkeypatch.setattr(rag, "similarity_search", lambda question, k: dense_documents)
+    monkeypatch.setattr(rag, "search_lexical", fail_lexical)
+    monkeypatch.setattr(rag.config, "RAG_CANDIDATE_POOL_SIZE", 4, raising=False)
+    monkeypatch.setattr(rag.config, "RAG_MAX_CHUNKS_PER_DOCUMENT", 2, raising=False)
+
+    retrieved, metadata, diagnostics = rag.retrieve_documents("query", k=3)
+
+    assert [item.document.metadata["chunk_id"] for item in retrieved] == ["d1:0", "d2:0", "d1:2"]
+    assert metadata["retrieval_strategy"] == "primary_dense_ranker"
+    assert metadata["retrieval_lexical_candidate_count"] == 0
+    assert metadata["retrieval_lexical_available"] is False
+    assert diagnostics["strategy"] == "primary_dense_ranker"
+    assert diagnostics["candidate_count"] == 4
+    assert diagnostics["selected"][0]["channel_ranks"] == {"dense": 1}
+
+
+def test_primary_dense_retrieval_skips_expanded_lexical(monkeypatch):
+    dense_by_query = {
+        "original": [
+            _retrieved("original", chunk_id="o:0", document_id="o", chunk_index=0, distance=0.3)
+        ],
+        "expanded": [
+            _retrieved("expanded", chunk_id="e:0", document_id="e", chunk_index=0, distance=0.1)
+        ],
+    }
+
+    def fail_lexical(*args, **kwargs):
+        raise AssertionError("primary_dense must not call lexical search")
+
+    monkeypatch.setattr(rag.config, "RAG_RETRIEVAL_MODE", "primary_dense", raising=False)
+    monkeypatch.setattr(rag, "similarity_search", lambda question, k: dense_by_query[question])
+    monkeypatch.setattr(rag, "search_lexical", fail_lexical)
+    monkeypatch.setattr(rag.config, "RAG_CANDIDATE_POOL_SIZE", 2, raising=False)
+
+    retrieved, metadata, diagnostics = rag.retrieve_documents(
+        "original",
+        k=2,
+        expanded_query="expanded",
+    )
+
+    assert {item.document.metadata["chunk_id"] for item in retrieved} == {"o:0", "e:0"}
+    assert metadata["retrieval_strategy"] == "primary_dense_ranker"
+    assert metadata["retrieval_query_count"] == 2
+    assert metadata["retrieval_expanded_dense_candidate_count"] == 1
+    assert metadata["retrieval_expanded_lexical_candidate_count"] == 0
+    assert any(
+        selected["channel_ranks"] == {"dense_rewrite": 1} for selected in diagnostics["selected"]
+    )
+
+
 def test_hybrid_retrieval_diversifies_documents_then_fills_without_adjacent_chunks(monkeypatch):
     dense_documents = [
         _retrieved("d1 c0", chunk_id="d1:0", document_id="d1", chunk_index=0, distance=0.1),

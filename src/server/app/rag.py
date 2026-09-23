@@ -515,12 +515,18 @@ def retrieve_documents(
         normalized_expanded_query
         and normalized_expanded_query.casefold() != question.strip().casefold()
     )
+    retrieval_mode = getattr(config, "RAG_RETRIEVAL_MODE", "hybrid")
+    primary_dense_mode = retrieval_mode == "primary_dense"
 
     dense_documents = dense_similarity_search(question, k=candidate_pool_size)
-    lexical_documents, lexical_available = lexical_similarity_search(
-        question,
-        k=candidate_pool_size,
-    )
+    if primary_dense_mode:
+        lexical_documents: list[RetrievedDocument] = []
+        lexical_available = False
+    else:
+        lexical_documents, lexical_available = lexical_similarity_search(
+            question,
+            k=candidate_pool_size,
+        )
     expanded_dense_documents: list[RetrievedDocument] = []
     expanded_lexical_documents: list[RetrievedDocument] = []
     expanded_lexical_available = False
@@ -533,10 +539,11 @@ def retrieve_documents(
                 normalized_expanded_query,
                 k=candidate_pool_size,
             )
-            expanded_lexical_documents, expanded_lexical_available = lexical_similarity_search(
-                normalized_expanded_query,
-                k=candidate_pool_size,
-            )
+            if not primary_dense_mode:
+                expanded_lexical_documents, expanded_lexical_available = lexical_similarity_search(
+                    normalized_expanded_query,
+                    k=candidate_pool_size,
+                )
         except Exception as exc:
             expanded_search_failed = True
             expanded_search_error_type = type(exc).__name__
@@ -565,7 +572,10 @@ def retrieve_documents(
         rrf_k=rrf_k,
         max_chunks_per_document=max_chunks_per_document,
     )
-    strategy = "hybrid" if all_lexical_documents else "dense_only"
+    if primary_dense_mode:
+        strategy = "primary_dense_ranker"
+    else:
+        strategy = "hybrid" if all_lexical_documents else "dense_only"
     query_count = 2 if use_expanded_query else 1
 
     retrieval_metadata = {

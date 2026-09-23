@@ -45,6 +45,15 @@ def _get_nonempty_env(name: str) -> str | None:
     return normalized or None
 
 
+def _get_choice_env(name: str, default: str, allowed: set[str]) -> str:
+    raw = _get_nonempty_env(name)
+    normalized = (raw or default).strip().casefold()
+    if normalized not in allowed:
+        choices = ", ".join(sorted(allowed))
+        raise ValueError(f"{name} must be one of: {choices}")
+    return normalized
+
+
 def _resolve_vector_db_dir() -> Path:
     configured = getenv("VECTOR_DB_DIR")
     if configured is None:
@@ -159,6 +168,7 @@ RAG_QUERY_REWRITE_MAX_HISTORY_MESSAGES = int(
 RAG_QUERY_REWRITE_MAX_HISTORY_CHARS = int(
     getenv("RAG_QUERY_REWRITE_MAX_HISTORY_CHARS", "600") or "600"
 )
+RAG_RETRIEVAL_MODE = _get_choice_env("RAG_RETRIEVAL_MODE", "hybrid", {"hybrid", "primary_dense"})
 RAG_SOURCE_SNIPPET_CHARS = int(getenv("RAG_SOURCE_SNIPPET_CHARS", "320") or "320")
 RAG_TOTAL_TIMEOUT_SECONDS = float(getenv("RAG_TOTAL_TIMEOUT_SECONDS", "420") or "420")
 _lexical_index_override = _get_nonempty_env("LEXICAL_INDEX_PATH")

@@ -37,6 +37,7 @@ def _reload_config_for_env(monkeypatch, **env: str):
         "RAG_MAX_TOTAL_CONTEXT_CHARS",
         "RAG_MAX_HISTORY_MESSAGES",
         "RAG_MAX_HISTORY_CHARS",
+        "RAG_RETRIEVAL_MODE",
         "RAG_SOURCE_SNIPPET_CHARS",
     }
     for key in keys:
@@ -119,6 +120,23 @@ def test_rag_policy_limits_are_configurable(monkeypatch):
     assert config.RAG_MAX_HISTORY_MESSAGES == 3
     assert config.RAG_MAX_HISTORY_CHARS == 400
     assert config.RAG_SOURCE_SNIPPET_CHARS == 120
+
+
+def test_rag_retrieval_mode_defaults_to_hybrid(monkeypatch):
+    config = _reload_config_for_env(monkeypatch)
+
+    assert config.RAG_RETRIEVAL_MODE == "hybrid"
+
+
+def test_rag_retrieval_mode_accepts_primary_dense(monkeypatch):
+    config = _reload_config_for_env(monkeypatch, RAG_RETRIEVAL_MODE="primary_dense")
+
+    assert config.RAG_RETRIEVAL_MODE == "primary_dense"
+
+
+def test_rag_retrieval_mode_rejects_invalid_value(monkeypatch):
+    with pytest.raises(ValueError, match="RAG_RETRIEVAL_MODE must be one of"):
+        _reload_config_for_env(monkeypatch, RAG_RETRIEVAL_MODE="dense-only")
 
 
 @pytest.mark.parametrize("variable", ["API_KEY", "TELEGRAM_SERVICE_KEY"])

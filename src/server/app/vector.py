@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,10 @@ class RetrievedDocument:
 _embedding_function: HuggingFaceEmbeddings | None = None
 _vector_store: Chroma | None = None
 
+_REEMBED_MANIFEST_NAME = "reembed_manifest.json"
+_MANIFEST_ERROR_MESSAGE = "Vector index manifest is incompatible with current vector configuration"
+_BGE_M3_MODEL = "BAAI/bge-m3"
+
 
 def clear_vector_cache() -> None:
     global _embedding_function, _vector_store
@@ -49,13 +54,43 @@ def get_embedding_function() -> HuggingFaceEmbeddings:
     return _embedding_function
 
 
+def _validate_reembed_manifest(vector_db_dir: Path) -> None:
+    manifest_path = vector_db_dir / _REEMBED_MANIFEST_NAME
+    if not manifest_path.exists():
+        if (
+            config.HF_EMBEDDING_MODEL == _BGE_M3_MODEL
+            and config.RAG_RETRIEVAL_MODE == "primary_dense"
+        ):
+            raise VectorStoreUnavailableError(_MANIFEST_ERROR_MESSAGE)
+        return
+
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        raise VectorStoreUnavailableError(_MANIFEST_ERROR_MESSAGE) from None
+
+    expected = {
+        "embedding_model": config.HF_EMBEDDING_MODEL,
+        "normalize_embeddings": config.HF_EMBEDDING_NORMALIZE,
+        "collection_name": config.CHROMA_COLLECTION_NAME,
+    }
+    if not isinstance(payload, dict):
+        raise VectorStoreUnavailableError(_MANIFEST_ERROR_MESSAGE)
+
+    for key, expected_value in expected.items():
+        if payload.get(key) != expected_value:
+            raise VectorStoreUnavailableError(_MANIFEST_ERROR_MESSAGE)
+
+
 def get_vector_store() -> Chroma:
     global _vector_store
     if _vector_store is None:
         config.validate_chunk_settings()
+        vector_db_dir = Path(config.VECTOR_DB_DIR)
+        _validate_reembed_manifest(vector_db_dir)
         _vector_store = Chroma(
             collection_name=config.CHROMA_COLLECTION_NAME,
-            persist_directory=str(Path(config.VECTOR_DB_DIR)),
+            persist_directory=str(vector_db_dir),
             embedding_function=get_embedding_function(),
         )
     return _vector_store
