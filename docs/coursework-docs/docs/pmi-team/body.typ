@@ -1,7 +1,3 @@
-#import "../../shared/typst/core.typ": project-name, project-summary
-
-#let project-name() = "Цифровой Ассистент Студента"
-
 #include "sections/01-object.typ"
 #include "sections/02-goals.typ"
 #include "sections/03-program.typ"
