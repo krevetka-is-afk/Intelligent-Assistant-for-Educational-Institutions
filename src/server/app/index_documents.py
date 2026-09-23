@@ -53,6 +53,24 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable bounded OCR for PDF pages with no extractable text.",
     )
+    parser.add_argument(
+        "--chunk-strategy",
+        choices=["fixed", "structure_v1"],
+        default=config.CHUNK_STRATEGY,
+        help="Chunking strategy to use while indexing.",
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=None,
+        help="Override RAG_CHUNK_SIZE for this indexing run.",
+    )
+    parser.add_argument(
+        "--chunk-overlap",
+        type=int,
+        default=None,
+        help="Override RAG_CHUNK_OVERLAP for this indexing run.",
+    )
     return parser
 
 
@@ -73,6 +91,9 @@ def main() -> int:
             audit_only=args.audit_only,
             report_path=args.report_json.resolve() if args.report_json is not None else None,
             enable_ocr=args.enable_ocr if args.enable_ocr else None,
+            chunk_strategy=args.chunk_strategy,
+            chunk_size=args.chunk_size,
+            overlap=args.chunk_overlap,
         )
     except Exception as exc:
         logging.getLogger("server.indexing").exception(

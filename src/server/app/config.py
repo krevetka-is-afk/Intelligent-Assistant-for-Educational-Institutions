@@ -191,6 +191,7 @@ CONVERSATION_MEMORY_MAX_SESSIONS = int(
 )
 CHUNK_SIZE = int(getenv("RAG_CHUNK_SIZE", "500") or "500")
 CHUNK_OVERLAP = int(getenv("RAG_CHUNK_OVERLAP", "100") or "100")
+CHUNK_STRATEGY = _get_choice_env("RAG_CHUNK_STRATEGY", "fixed", {"fixed", "structure_v1"})
 PREPARE_RAG_ON_STARTUP = _get_bool_env("PREPARE_RAG_ON_STARTUP", True)
 AUTO_INDEX_ON_STARTUP = _get_bool_env("AUTO_INDEX_ON_STARTUP", APP_ENV != "production")
 SHOW_SOURCES = _get_bool_env("SHOW_SOURCES", True)
@@ -207,6 +208,8 @@ def validate_chunk_settings() -> None:
         raise ValueError("RAG_CHUNK_OVERLAP must be non-negative")
     if CHUNK_OVERLAP >= CHUNK_SIZE:
         raise ValueError("RAG_CHUNK_OVERLAP must be smaller than RAG_CHUNK_SIZE")
+    if CHUNK_STRATEGY not in {"fixed", "structure_v1"}:
+        raise ValueError("RAG_CHUNK_STRATEGY must be one of: fixed, structure_v1")
 
 
 def validate_rag_policy_settings() -> None:

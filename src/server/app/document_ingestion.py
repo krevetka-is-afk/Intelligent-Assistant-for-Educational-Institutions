@@ -43,6 +43,8 @@ MIME_TYPES = {
 }
 WORD_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 CORE_NS = {"dc": "http://purl.org/dc/elements/1.1/"}
+SUPPORTED_CHUNK_STRATEGIES = frozenset({"fixed", "structure_v1"})
+STRUCTURAL_CHUNK_MAX_CHARS = 900
 
 
 class DocumentParsingError(RuntimeError):
@@ -61,10 +63,21 @@ class DocumentParsingError(RuntimeError):
 
 
 @dataclass(slots=True)
+class TextBlock:
+    text: str
+    start: int
+    end: int
+    kind: str = "paragraph"
+    level: int | None = None
+    fallback_reason: str | None = None
+
+
+@dataclass(slots=True)
 class TextSection:
     text: str
     page: int | None
     base_offset: int
+    blocks: list[TextBlock] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -226,6 +239,337 @@ def chunk_text(text: str, *, chunk_size: int, overlap: int) -> list[tuple[int, i
         start += step
 
     return chunks
+
+
+def _trim_span(text: str, start: int, end: int) -> tuple[int, int]:
+    while start < end and text[start].isspace():
+        start += 1
+    while end > start and text[end - 1].isspace():
+        end -= 1
+    return start, end
+
+
+def _paragraph_spans(text: str) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    start: int | None = None
+    index = 0
+    text_length = len(text)
+    while index < text_length:
+        if text[index : index + 2] == "\n\n":
+            if start is not None:
+                trimmed = _trim_span(text, start, index)
+                if trimmed[0] < trimmed[1]:
+                    spans.append(trimmed)
+                start = None
+            index += 2
+            continue
+        if start is None and not text[index].isspace():
+            start = index
+        index += 1
+    if start is not None:
+        trimmed = _trim_span(text, start, text_length)
+        if trimmed[0] < trimmed[1]:
+            spans.append(trimmed)
+    return spans
+
+
+def _line_spans(text: str) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for line in text.splitlines(keepends=True):
+        end = start + len(line)
+        trimmed = _trim_span(text, start, end)
+        if trimmed[0] < trimmed[1]:
+            spans.append(trimmed)
+        start = end
+    return spans
+
+
+def _looks_like_numbered_text(text: str) -> bool:
+    stripped = text.lstrip()
+    if not stripped:
+        return False
+    marker = stripped.split(maxsplit=1)[0]
+    return marker.rstrip(".)").isdigit() or (
+        len(marker) <= 6 and "." in marker and marker.replace(".", "").isdigit()
+    )
+
+
+def _numbered_text_level(text: str, fallback: int | None = None) -> int | None:
+    stripped = text.lstrip()
+    if not stripped:
+        return fallback
+    marker = stripped.split(maxsplit=1)[0].rstrip(".)")
+    if not marker or not marker.replace(".", "").isdigit():
+        return fallback
+    return max(marker.count("."), fallback or 0)
+
+
+def _looks_like_heading_text(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped or len(stripped) > 120 or len(stripped) < 12:
+        return False
+    if stripped.endswith((".", ";", ",")):
+        return False
+    if len(stripped.split()) < 2:
+        return False
+    letters = [char for char in stripped if char.isalpha()]
+    return bool(letters) and (stripped.isupper() or len(stripped.split()) <= 8)
+
+
+def _block_kind_from_text(text: str) -> str:
+    if _looks_like_numbered_text(text):
+        return "numbered"
+    if _looks_like_heading_text(text):
+        return "heading"
+    return "paragraph"
+
+
+def _block_kind_from_pdf_line(text: str) -> str:
+    if text.strip().isdigit():
+        return "paragraph"
+    if _looks_like_numbered_text(text):
+        return "numbered"
+    stripped = text.strip()
+    letters = [char for char in stripped if char.isalpha()]
+    if (
+        len(stripped) >= 12
+        and len(stripped) <= 120
+        and len(stripped.split()) >= 2
+        and not stripped.endswith((".", ";", ","))
+        and letters
+        and stripped.isupper()
+    ):
+        return "heading"
+    return "paragraph"
+
+
+def _pdf_line_blocks_if_reliable(text: str) -> list[TextBlock] | None:
+    line_spans = _line_spans(text)
+    if len(line_spans) < 2:
+        return None
+
+    blocks: list[TextBlock] = []
+    for start, end in line_spans:
+        line_text = text[start:end]
+        kind = _block_kind_from_pdf_line(line_text)
+        blocks.append(
+            TextBlock(
+                text=line_text,
+                start=start,
+                end=end,
+                kind=kind,
+                level=_numbered_text_level(line_text) if kind == "numbered" else None,
+            )
+        )
+    structural_count = sum(1 for block in blocks if block.kind in {"heading", "numbered"})
+    numbered_count = sum(1 for block in blocks if block.kind == "numbered")
+    if structural_count == 0:
+        return None
+    if structural_count == len(blocks):
+        return blocks if numbered_count else None
+    if numbered_count:
+        return blocks if structural_count <= max(6, len(blocks) // 2) else None
+    return blocks if structural_count <= max(3, len(blocks) // 4) else None
+
+
+def _infer_pdf_blocks(section: TextSection) -> tuple[list[TextBlock], str]:
+    text = section.text
+    if "\n\n" in text:
+        spans = _paragraph_spans(text)
+        fallback_reason = "none"
+    elif "\n" in text:
+        line_blocks = _pdf_line_blocks_if_reliable(text)
+        if line_blocks is not None:
+            return line_blocks, "none"
+        spans = [(0, len(text))] if text else []
+        fallback_reason = "pdf_line_fallback"
+    else:
+        spans = [(0, len(text))] if text else []
+        fallback_reason = "no_structural_blocks"
+
+    blocks = [
+        TextBlock(
+            text=text[start:end],
+            start=start,
+            end=end,
+            kind=_block_kind_from_text(text[start:end]),
+        )
+        for start, end in spans
+    ]
+    return blocks, fallback_reason
+
+
+def _split_long_span(
+    text: str,
+    start: int,
+    end: int,
+    *,
+    max_chars: int,
+) -> list[tuple[int, int, str]]:
+    spans: list[tuple[int, int, str]] = []
+    cursor = start
+    reason = "long_block_sentence"
+
+    while cursor < end:
+        limit = min(cursor + max_chars, end)
+        if limit >= end:
+            chunk_end = end
+        else:
+            sentence_end = max(
+                text.rfind(".", cursor, limit),
+                text.rfind("!", cursor, limit),
+                text.rfind("?", cursor, limit),
+            )
+            if sentence_end > cursor and not _would_leave_bad_chunk_start(
+                text, sentence_end + 1, end
+            ):
+                chunk_end = sentence_end + 1
+            else:
+                word_end = text.rfind(" ", cursor, limit)
+                if word_end > cursor and not _would_leave_bad_chunk_start(text, word_end, end):
+                    chunk_end = word_end
+                    reason = "long_block_word"
+                else:
+                    chunk_end = limit
+                    reason = "long_block_hard"
+        if text[cursor:chunk_end].strip():
+            spans.append((cursor, chunk_end, reason))
+        cursor = max(chunk_end, cursor + 1)
+
+    return spans
+
+
+def _would_leave_bad_chunk_start(text: str, split_at: int, end: int) -> bool:
+    next_start = split_at
+    while next_start < end and text[next_start].isspace():
+        next_start += 1
+    if next_start >= end:
+        return False
+    if text[next_start] in ",;:)]}":
+        return True
+    next_word_end = next_start
+    while next_word_end < end and not text[next_word_end].isspace():
+        next_word_end += 1
+    next_word = text[next_start:next_word_end].strip(".,;:!?)]}")
+    return len(next_word) == 1 and next_word.isalpha()
+
+
+def _merge_orphan_numeric_spans(
+    text: str, spans: list[tuple[int, int, str]]
+) -> list[tuple[int, int, str]]:
+    merged: list[tuple[int, int, str]] = []
+    index = 0
+    while index < len(spans):
+        start, end, reason = spans[index]
+        content = text[start:end].strip()
+        if content.isdigit() and len(content) <= 4 and index + 1 < len(spans):
+            _next_start, next_end, next_reason = spans[index + 1]
+            merged.append((start, next_end, next_reason if reason == "none" else reason))
+            index += 2
+            continue
+        if content.isdigit() and len(content) <= 4 and merged:
+            previous_start, _previous_end, previous_reason = merged[-1]
+            merged[-1] = (previous_start, end, previous_reason)
+            index += 1
+            continue
+        merged.append((start, end, reason))
+        index += 1
+    return merged
+
+
+def _structural_spans_for_section(
+    section: TextSection,
+    *,
+    source_type: str,
+    max_chars: int,
+) -> list[tuple[int, int, str]]:
+    if section.blocks:
+        blocks = section.blocks
+        default_fallback = "none"
+    elif source_type == "pdf":
+        blocks, default_fallback = _infer_pdf_blocks(section)
+    else:
+        spans = _paragraph_spans(section.text)
+        blocks = [
+            TextBlock(
+                text=section.text[start:end],
+                start=start,
+                end=end,
+                kind=_block_kind_from_text(section.text[start:end]),
+            )
+            for start, end in spans
+        ]
+        default_fallback = "no_structural_blocks"
+
+    if not blocks:
+        return []
+
+    spans: list[tuple[int, int, str]] = []
+    current_start: int | None = None
+    current_end: int | None = None
+    current_fallback_reason = default_fallback
+    current_first_kind: str | None = None
+    current_block_count = 0
+
+    def flush() -> None:
+        nonlocal current_start, current_end, current_fallback_reason
+        nonlocal current_first_kind, current_block_count
+        if current_start is not None and current_end is not None:
+            spans.append((current_start, current_end, current_fallback_reason))
+        current_start = None
+        current_end = None
+        current_fallback_reason = default_fallback
+        current_first_kind = None
+        current_block_count = 0
+
+    for block in blocks:
+        if block.end - block.start > max_chars:
+            flush()
+            spans.extend(
+                _split_long_span(
+                    section.text,
+                    block.start,
+                    block.end,
+                    max_chars=max_chars,
+                )
+            )
+            continue
+
+        if current_start is None:
+            current_start = block.start
+            current_end = block.end
+            current_first_kind = block.kind
+            current_block_count = 1
+            if block.fallback_reason:
+                current_fallback_reason = block.fallback_reason
+            continue
+
+        assert current_end is not None
+        candidate_length = block.end - current_start
+        starts_new_heading = block.kind == "heading"
+        starts_new_top_numbered = block.kind == "numbered" and (block.level in {None, 0})
+        follows_lonely_heading = current_block_count == 1 and current_first_kind == "heading"
+        if (
+            starts_new_heading
+            or (starts_new_top_numbered and not follows_lonely_heading)
+            or candidate_length > max_chars
+        ):
+            flush()
+            current_start = block.start
+            current_end = block.end
+            current_first_kind = block.kind
+            current_block_count = 1
+            if block.fallback_reason:
+                current_fallback_reason = block.fallback_reason
+        else:
+            current_end = block.end
+            current_block_count += 1
+            if block.fallback_reason:
+                current_fallback_reason = block.fallback_reason
+
+    flush()
+    return _merge_orphan_numeric_spans(section.text, spans)
 
 
 def _build_sections(texts: Iterable[tuple[str, int | None]]) -> list[TextSection]:
@@ -664,7 +1008,35 @@ def _extract_docx_title(archive: zipfile.ZipFile) -> str | None:
     return title or None
 
 
-def _extract_docx_text(archive: zipfile.ZipFile) -> tuple[str, dict[str, Any]]:
+def _docx_attr_value(node: ET.Element, name: str) -> str | None:
+    return node.attrib.get(f"{{{WORD_NS['w']}}}{name}") or node.attrib.get(name)
+
+
+def _docx_paragraph_kind(paragraph: ET.Element) -> tuple[str, int | None]:
+    properties = paragraph.find("w:pPr", WORD_NS)
+    if properties is None:
+        return "paragraph", None
+
+    style_node = properties.find("w:pStyle", WORD_NS)
+    style = _docx_attr_value(style_node, "val") if style_node is not None else None
+    normalized_style = (style or "").replace(" ", "").casefold()
+    if normalized_style.startswith("heading") or normalized_style.startswith("заголовок"):
+        return "heading", None
+
+    num_pr = properties.find("w:numPr", WORD_NS)
+    if num_pr is not None:
+        level_node = num_pr.find("w:ilvl", WORD_NS)
+        raw_level = _docx_attr_value(level_node, "val") if level_node is not None else None
+        try:
+            level = int(raw_level) if raw_level is not None else None
+        except ValueError:
+            level = None
+        return "numbered", level
+
+    return "paragraph", None
+
+
+def _extract_docx_text(archive: zipfile.ZipFile) -> tuple[str, dict[str, Any], list[TextBlock]]:
     try:
         raw_document = archive.read("word/document.xml")
     except KeyError as exc:
@@ -683,7 +1055,11 @@ def _extract_docx_text(archive: zipfile.ZipFile) -> tuple[str, dict[str, Any]]:
             details={"detail_reason": "docx_parser_error"},
         ) from exc
 
-    paragraphs: list[str] = []
+    tables = root.findall(".//w:tbl", WORD_NS)
+    table_paragraph_ids = {
+        id(paragraph) for table in tables for paragraph in table.findall(".//w:p", WORD_NS)
+    }
+    paragraphs: list[tuple[str, str, int | None, str | None]] = []
     navigation_lines = 0
     navigation_hits = 0
     numeric_lines = 0
@@ -700,7 +1076,13 @@ def _extract_docx_text(archive: zipfile.ZipFile) -> tuple[str, dict[str, Any]]:
         texts = [node.text or "" for node in paragraph.findall(".//w:t", WORD_NS)]
         joined = normalize_text("".join(texts))
         if joined:
-            paragraphs.append(joined)
+            kind, level = _docx_paragraph_kind(paragraph)
+            if kind == "numbered":
+                level = _numbered_text_level(joined, fallback=level)
+            fallback_reason = (
+                "docx_table_read_order" if id(paragraph) in table_paragraph_ids else None
+            )
+            paragraphs.append((joined, kind, level, fallback_reason))
             lowered = joined.lower()
             line_navigation_hits = sum(1 for marker in navigation_markers if marker in lowered)
             if line_navigation_hits:
@@ -709,7 +1091,28 @@ def _extract_docx_text(archive: zipfile.ZipFile) -> tuple[str, dict[str, Any]]:
             if sum(char.isdigit() for char in joined) >= max(3, int(len(joined) * 0.45)):
                 numeric_lines += 1
 
-    text = "\n\n".join(paragraphs)
+    text_parts: list[str] = []
+    blocks: list[TextBlock] = []
+    offset = 0
+    for index, (paragraph_text, kind, level, fallback_reason) in enumerate(paragraphs):
+        if index:
+            text_parts.append("\n\n")
+            offset += 2
+        start = offset
+        text_parts.append(paragraph_text)
+        offset += len(paragraph_text)
+        blocks.append(
+            TextBlock(
+                text=paragraph_text,
+                start=start,
+                end=offset,
+                kind=kind,
+                level=level,
+                fallback_reason=fallback_reason,
+            )
+        )
+
+    text = "".join(text_parts)
     plain_length = len(text)
     digit_count = sum(char.isdigit() for char in text)
     relationship_files = [name for name in archive.namelist() if name.endswith(".rels")]
@@ -725,6 +1128,12 @@ def _extract_docx_text(archive: zipfile.ZipFile) -> tuple[str, dict[str, Any]]:
     media_count = sum(1 for name in archive.namelist() if name.startswith("word/media/"))
     metrics = {
         "docx_paragraphs": len(paragraphs),
+        "docx_table_paragraphs": sum(
+            1 for _text, _kind, _level, fallback_reason in paragraphs if fallback_reason
+        ),
+        "docx_tables": len(tables),
+        "docx_has_tables": bool(table_paragraph_ids),
+        "docx_read_order_ambiguous": bool(table_paragraph_ids),
         "docx_chars": plain_length,
         "docx_digit_ratio": round(digit_count / plain_length, 4) if plain_length else 0.0,
         "docx_navigation_line_ratio": (
@@ -736,7 +1145,7 @@ def _extract_docx_text(archive: zipfile.ZipFile) -> tuple[str, dict[str, Any]]:
         "docx_hyperlink_density": round(hyperlink_count / max(plain_length / 1000, 1), 4),
         "docx_media": media_count,
     }
-    return text, metrics
+    return text, metrics, blocks
 
 
 def _classify_docx_quality(metrics: dict[str, Any]) -> dict[str, Any]:
@@ -794,7 +1203,7 @@ def _load_docx(path: Path) -> tuple[str, list[TextSection], dict[str, Any]]:
     try:
         with zipfile.ZipFile(path) as archive:
             title = _extract_docx_title(archive)
-            text, metrics = _extract_docx_text(archive)
+            text, metrics, blocks = _extract_docx_text(archive)
     except zipfile.BadZipFile as exc:
         raise DocumentParsingError(
             f"DOCX {path} is not a valid archive",
@@ -812,7 +1221,11 @@ def _load_docx(path: Path) -> tuple[str, list[TextSection], dict[str, Any]]:
         )
 
     resolved_title = title or normalize_text(path.stem) or path.stem
-    return resolved_title, _build_sections([(normalized_text, None)]), quality_metadata
+    return (
+        resolved_title,
+        [TextSection(text=normalized_text, page=None, base_offset=0, blocks=blocks)],
+        quality_metadata,
+    )
 
 
 def load_document(path: Path, *, root_dir: Path, enable_ocr: bool | None = None) -> ParsedDocument:
@@ -853,17 +1266,40 @@ def build_chunk_records(
     chunk_size: int,
     overlap: int,
     indexed_at: str | None = None,
+    chunk_strategy: str = "fixed",
 ) -> list[ChunkRecord]:
+    if chunk_strategy not in SUPPORTED_CHUNK_STRATEGIES:
+        choices = ", ".join(sorted(SUPPORTED_CHUNK_STRATEGIES))
+        raise ValueError(f"chunk strategy must be one of: {choices}")
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+
     timestamp = indexed_at or datetime.now(UTC).isoformat()
     records: list[ChunkRecord] = []
     chunk_index = 0
 
     for section in parsed_document.sections:
-        for start, end, chunk_text_value in chunk_text(
-            section.text,
-            chunk_size=chunk_size,
-            overlap=overlap,
-        ):
+        if chunk_strategy == "fixed":
+            chunk_spans = [
+                (start, end, chunk_text_value, None)
+                for start, end, chunk_text_value in chunk_text(
+                    section.text,
+                    chunk_size=chunk_size,
+                    overlap=overlap,
+                )
+            ]
+        else:
+            max_chars = min(chunk_size, STRUCTURAL_CHUNK_MAX_CHARS)
+            chunk_spans = [
+                (start, end, section.text[start:end].strip(), fallback_reason)
+                for start, end, fallback_reason in _structural_spans_for_section(
+                    section,
+                    source_type=parsed_document.source_type,
+                    max_chars=max_chars,
+                )
+            ]
+
+        for start, end, chunk_text_value, fallback_reason in chunk_spans:
             chunk_id = f"{parsed_document.document_id}:{chunk_index:05d}"
             metadata: dict[str, Any] = {
                 "document_id": parsed_document.document_id,
@@ -878,10 +1314,13 @@ def build_chunk_records(
                 "char_start": section.base_offset + start,
                 "char_end": section.base_offset + end,
                 "indexed_at": timestamp,
+                "chunk_strategy": chunk_strategy,
             }
             metadata.update(parsed_document.metadata)
             if section.page is not None:
                 metadata["page"] = section.page
+            if chunk_strategy == "structure_v1":
+                metadata["chunk_fallback_reason"] = fallback_reason or "none"
             records.append(
                 ChunkRecord(id=chunk_id, page_content=chunk_text_value, metadata=metadata)
             )
@@ -1022,6 +1461,19 @@ def _delete_stale_document_chunks(
     return stale_document_ids
 
 
+def _get_indexed_chunk_strategies(vector_store: Chroma) -> set[str]:
+    collection = vector_store._collection
+    existing = collection.get(include=["metadatas"])
+    strategies: set[str] = set()
+    for metadata in existing.get("metadatas") or []:
+        if not isinstance(metadata, dict):
+            continue
+        strategy = metadata.get("chunk_strategy") or "fixed"
+        if isinstance(strategy, str) and strategy:
+            strategies.add(strategy)
+    return strategies
+
+
 def create_vector_store(persist_directory: Path, collection_name: str, *, rebuild: bool) -> Chroma:
     embedding_function = get_embedding_function()
     vector_store = Chroma(
@@ -1057,12 +1509,17 @@ def index_directory(
     audit_only: bool = False,
     report_path: Path | None = None,
     enable_ocr: bool | None = None,
+    chunk_strategy: str | None = None,
 ) -> IndexingSummary:
     config.validate_chunk_settings()
     collection = collection_name or config.CHROMA_COLLECTION_NAME
     resolved_chunk_size = chunk_size or config.CHUNK_SIZE
     resolved_overlap = overlap if overlap is not None else config.CHUNK_OVERLAP
     resolved_enable_ocr = config.DOCUMENT_OCR_ENABLED if enable_ocr is None else enable_ocr
+    resolved_chunk_strategy = chunk_strategy or config.CHUNK_STRATEGY
+    if resolved_chunk_strategy not in SUPPORTED_CHUNK_STRATEGIES:
+        choices = ", ".join(sorted(SUPPORTED_CHUNK_STRATEGIES))
+        raise ValueError(f"chunk strategy must be one of: {choices}")
 
     if not input_dir.exists():
         raise FileNotFoundError(f"Input directory does not exist: {input_dir}")
@@ -1070,6 +1527,12 @@ def index_directory(
     if not audit_only:
         persist_directory.mkdir(parents=True, exist_ok=True)
         vector_store = create_vector_store(persist_directory, collection, rebuild=rebuild)
+        existing_strategies = _get_indexed_chunk_strategies(vector_store)
+        if existing_strategies and existing_strategies != {resolved_chunk_strategy}:
+            raise ValueError(
+                "chunk strategy change requires rebuild: "
+                f"existing={sorted(existing_strategies)} requested={resolved_chunk_strategy}"
+            )
         resolved_lexical_index_path = lexical.resolve_lexical_index_path(
             persist_directory=persist_directory,
             lexical_index_path=lexical_index_path,
@@ -1106,6 +1569,7 @@ def index_directory(
                 chunk_size=resolved_chunk_size,
                 overlap=resolved_overlap,
                 indexed_at=indexed_at,
+                chunk_strategy=resolved_chunk_strategy,
             )
             file_result["metadata"] = parsed_document.metadata
             file_result["chunks"] = len(chunk_records)
@@ -1120,6 +1584,19 @@ def index_directory(
                 summary.indexed_files += 1
                 summary.chunks_written += len(chunk_records)
                 file_result["status"] = "parsed"
+                file_result["chunk_records"] = [
+                    {
+                        "chunk_id": record.id,
+                        "chunk_index": record.metadata.get("chunk_index"),
+                        "page": record.metadata.get("page"),
+                        "char_start": record.metadata.get("char_start"),
+                        "char_end": record.metadata.get("char_end"),
+                        "chunk_strategy": record.metadata.get("chunk_strategy"),
+                        "chunk_fallback_reason": record.metadata.get("chunk_fallback_reason"),
+                        "text": record.page_content,
+                    }
+                    for record in chunk_records
+                ]
                 continue
 
             try:

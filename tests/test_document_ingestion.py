@@ -3,8 +3,12 @@ from __future__ import annotations
 import zipfile
 from hashlib import sha256
 from pathlib import Path
+from typing import Any, cast
+from xml.sax.saxutils import escape
 
+import pytest
 from langchain_chroma import Chroma
+from langchain_core.embeddings import Embeddings
 
 from src.server.app.document_ingestion import (
     DocumentParsingError,
@@ -18,11 +22,11 @@ from src.server.app.document_ingestion import (
 from src.server.app.lexical import get_indexed_document_ids, search_lexical
 
 
-class _FakeEmbeddings:
-    def embed_documents(self, texts):
+class _FakeEmbeddings(Embeddings):
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return [self._embed(text) for text in texts]
 
-    def embed_query(self, text):
+    def embed_query(self, text: str) -> list[float]:
         return self._embed(text)
 
     @staticmethod
@@ -32,13 +36,47 @@ class _FakeEmbeddings:
         return [length, checksum, 1.0]
 
 
+def _stored_metadatas(payload: Any) -> list[dict[str, Any]]:
+    metadatas = payload.get("metadatas") or []
+    return [dict(metadata) for metadata in metadatas if isinstance(metadata, dict)]
+
+
 def _write_docx(
     path: Path,
     *,
     title: str,
     paragraphs: list[str],
+    paragraph_styles: list[str | None] | None = None,
+    numbered_paragraphs: set[int] | None = None,
+    numbered_levels: dict[int, int] | None = None,
+    tables: list[list[list[str]]] | None = None,
     hyperlink_count: int = 0,
 ) -> None:
+    numbered_paragraphs = numbered_paragraphs or set()
+    numbered_levels = numbered_levels or {index: 0 for index in numbered_paragraphs}
+    paragraph_styles = paragraph_styles or [None] * len(paragraphs)
+    tables = tables or []
+
+    def paragraph_xml(index: int, paragraph: str) -> str:
+        style = paragraph_styles[index] if index < len(paragraph_styles) else None
+        properties: list[str] = []
+        if style:
+            properties.append(f'<w:pStyle w:val="{escape(style)}"/>')
+        if index in numbered_paragraphs or index in numbered_levels:
+            level = numbered_levels.get(index, 0)
+            properties.append(f'<w:numPr><w:ilvl w:val="{level}"/><w:numId w:val="1"/></w:numPr>')
+        ppr = f"<w:pPr>{''.join(properties)}</w:pPr>" if properties else ""
+        return f"<w:p>{ppr}<w:r><w:t>{escape(paragraph)}</w:t></w:r></w:p>"
+
+    def table_xml(rows: list[list[str]]) -> str:
+        row_xml = []
+        for row in rows:
+            cells = "".join(
+                f"<w:tc><w:p><w:r><w:t>{escape(cell)}</w:t></w:r></w:p></w:tc>" for cell in row
+            )
+            row_xml.append(f"<w:tr>{cells}</w:tr>")
+        return f"<w:tbl>{''.join(row_xml)}</w:tbl>"
+
     document_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
       <w:body>
@@ -47,8 +85,9 @@ def _write_docx(
     </w:document>
     """.format(
         paragraphs="".join(
-            f"<w:p><w:r><w:t>{paragraph}</w:t></w:r></w:p>" for paragraph in paragraphs
+            paragraph_xml(index, paragraph) for index, paragraph in enumerate(paragraphs)
         )
+        + "".join(table_xml(table) for table in tables)
     )
     core_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
@@ -603,7 +642,7 @@ def test_pdf_ocr_timeout_does_not_double_count_pages_beyond_limit(monkeypatch):
         lambda image, remaining_seconds: "OCR text",
     )
 
-    texts, metrics = _ocr_pdf_pages(_Reader(), max_pages=2, timeout_seconds=1.0)
+    texts, metrics = _ocr_pdf_pages(cast(Any, _Reader()), max_pages=2, timeout_seconds=1.0)
 
     assert texts == [("OCR text", 1)]
     assert metrics["ocr_status"] == "timeout"
@@ -725,6 +764,345 @@ def test_build_chunk_records_preserves_document_quality_flags(tmp_path):
 
     assert chunks[0].metadata["quality_status"] == "review"
     assert "many_numeric_lines" in chunks[0].metadata["quality_reasons"]
+
+
+def test_build_chunk_records_fixed_strategy_matches_legacy_chunks(tmp_path):
+    txt_path = tmp_path / "handbook.txt"
+    txt_path.write_text("abcdefghij", encoding="utf-8")
+    parsed = load_document(txt_path, root_dir=tmp_path)
+
+    legacy_chunks = build_chunk_records(
+        parsed,
+        chunk_size=5,
+        overlap=2,
+        indexed_at="2026-03-22T00:00:00Z",
+    )
+    fixed_chunks = build_chunk_records(
+        parsed,
+        chunk_size=5,
+        overlap=2,
+        indexed_at="2026-03-22T00:00:00Z",
+        chunk_strategy="fixed",
+    )
+
+    assert [(chunk.id, chunk.page_content, chunk.metadata) for chunk in fixed_chunks] == [
+        (chunk.id, chunk.page_content, chunk.metadata) for chunk in legacy_chunks
+    ]
+    assert {chunk.metadata["chunk_strategy"] for chunk in fixed_chunks} == {"fixed"}
+
+
+def test_build_chunk_records_rejects_unknown_chunk_strategy(tmp_path):
+    txt_path = tmp_path / "handbook.txt"
+    txt_path.write_text("Полезный текст", encoding="utf-8")
+    parsed = load_document(txt_path, root_dir=tmp_path)
+
+    with pytest.raises(ValueError, match="chunk strategy"):
+        build_chunk_records(
+            parsed,
+            chunk_size=500,
+            overlap=100,
+            chunk_strategy="semantic_v9",
+        )
+
+
+def test_structure_v1_keeps_docx_heading_with_following_paragraph(tmp_path):
+    docx_path = tmp_path / "rules.docx"
+    heading = "Порядок пересдачи"
+    paragraph = "Студент допускается к пересдаче в сроки, установленные университетом."
+    _write_docx(
+        docx_path,
+        title="Правила",
+        paragraphs=[heading, paragraph, "Следующий раздел"],
+        paragraph_styles=["Heading1", None, "Heading1"],
+    )
+    parsed = load_document(docx_path, root_dir=tmp_path)
+
+    chunks = build_chunk_records(
+        parsed,
+        chunk_size=900,
+        overlap=0,
+        indexed_at="2026-03-22T00:00:00Z",
+        chunk_strategy="structure_v1",
+    )
+
+    assert any(
+        heading in chunk.page_content and paragraph in chunk.page_content for chunk in chunks
+    )
+    assert all(chunk.page_content.strip() != heading for chunk in chunks)
+    assert {chunk.metadata["chunk_strategy"] for chunk in chunks} == {"structure_v1"}
+
+
+def test_structure_v1_keeps_numbered_docx_intro_with_subitems(tmp_path):
+    docx_path = tmp_path / "numbered.docx"
+    intro = "1. Студент обязан соблюдать правила внутреннего распорядка."
+    subitem = "1.1. Нарушение правил может повлечь дисциплинарное взыскание."
+    _write_docx(
+        docx_path,
+        title="Нумерованные правила",
+        paragraphs=[intro, subitem, "2. Следующий самостоятельный пункт."],
+        numbered_paragraphs={0, 1, 2},
+    )
+    parsed = load_document(docx_path, root_dir=tmp_path)
+
+    chunks = build_chunk_records(
+        parsed,
+        chunk_size=900,
+        overlap=0,
+        indexed_at="2026-03-22T00:00:00Z",
+        chunk_strategy="structure_v1",
+    )
+
+    assert any(intro in chunk.page_content and subitem in chunk.page_content for chunk in chunks)
+
+
+def test_structure_v1_starts_new_chunk_for_next_top_level_docx_numbered_item(tmp_path):
+    docx_path = tmp_path / "nested-numbered.docx"
+    item_one = "1. Студент подает заявление на пересдачу."
+    subitem = "1.1. К заявлению прикладываются подтверждающие документы."
+    item_two = "2. Комиссия рассматривает заявление отдельно."
+    _write_docx(
+        docx_path,
+        title="Нумерованные правила",
+        paragraphs=[item_one, subitem, item_two],
+        numbered_levels={0: 0, 1: 1, 2: 0},
+    )
+    parsed = load_document(docx_path, root_dir=tmp_path)
+
+    chunks = build_chunk_records(
+        parsed,
+        chunk_size=900,
+        overlap=0,
+        indexed_at="2026-03-22T00:00:00Z",
+        chunk_strategy="structure_v1",
+    )
+
+    assert any(
+        item_one in chunk.page_content
+        and subitem in chunk.page_content
+        and item_two not in chunk.page_content
+        for chunk in chunks
+    )
+    assert any(
+        item_two in chunk.page_content
+        and item_one not in chunk.page_content
+        and subitem not in chunk.page_content
+        for chunk in chunks
+    )
+
+
+def test_structure_v1_preserves_docx_table_order_and_marks_table_fallback(tmp_path):
+    docx_path = tmp_path / "table.docx"
+    _write_docx(
+        docx_path,
+        title="Таблица",
+        paragraphs=["Раздел с таблицей"],
+        paragraph_styles=["Heading1"],
+        tables=[
+            [
+                ["Показатель", "Значение"],
+                ["Пересдача", "10 дней"],
+            ]
+        ],
+    )
+    parsed = load_document(docx_path, root_dir=tmp_path)
+
+    chunks = build_chunk_records(
+        parsed,
+        chunk_size=900,
+        overlap=0,
+        indexed_at="2026-03-22T00:00:00Z",
+        chunk_strategy="structure_v1",
+    )
+    combined = "\n".join(chunk.page_content for chunk in chunks)
+
+    assert combined.index("Показатель") < combined.index("Значение")
+    assert combined.index("Значение") < combined.index("Пересдача")
+    assert combined.index("Пересдача") < combined.index("10 дней")
+    assert parsed.metadata["docx_tables"] == 1
+    assert any(
+        "docx_table" in str(chunk.metadata.get("chunk_fallback_reason", "")) for chunk in chunks
+    )
+
+
+def test_structure_v1_does_not_cross_pdf_pages(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "pages.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    class _Reader:
+        pages = [
+            _PdfPage("Первая страница про пересдачу."),
+            _PdfPage("Вторая страница про дисциплинарное взыскание."),
+        ]
+
+        def __init__(self, path: str) -> None:
+            assert path == str(pdf_path)
+
+    monkeypatch.setattr("src.server.app.document_ingestion.PdfReader", _Reader)
+    parsed = load_document(pdf_path, root_dir=tmp_path)
+
+    chunks = build_chunk_records(
+        parsed,
+        chunk_size=900,
+        overlap=0,
+        indexed_at="2026-03-22T00:00:00Z",
+        chunk_strategy="structure_v1",
+    )
+
+    assert [(chunk.metadata["page"], chunk.page_content) for chunk in chunks] == [
+        (1, "Первая страница про пересдачу."),
+        (2, "Вторая страница про дисциплинарное взыскание."),
+    ]
+
+
+def test_structure_v1_groups_clear_pdf_heading_and_list_without_tiny_chunks(
+    tmp_path,
+    monkeypatch,
+):
+    pdf_path = tmp_path / "clear-list.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    heading = "ПОРЯДОК ПЕРЕСДАЧИ"
+    item_one = "1. Студент подает заявление на пересдачу."
+    subitem = "1.1. К заявлению прикладываются документы."
+    item_two = "2. Комиссия рассматривает заявление."
+
+    class _Reader:
+        pages = [_PdfPage("\n".join([heading, item_one, subitem, item_two]))]
+
+        def __init__(self, path: str) -> None:
+            assert path == str(pdf_path)
+
+    monkeypatch.setattr("src.server.app.document_ingestion.PdfReader", _Reader)
+    parsed = load_document(pdf_path, root_dir=tmp_path)
+
+    chunks = build_chunk_records(
+        parsed,
+        chunk_size=900,
+        overlap=0,
+        indexed_at="2026-03-22T00:00:00Z",
+        chunk_strategy="structure_v1",
+    )
+
+    assert len(chunks) <= 2
+    assert any(
+        heading in chunk.page_content
+        and item_one in chunk.page_content
+        and subitem in chunk.page_content
+        for chunk in chunks
+    )
+    assert {chunk.metadata["chunk_fallback_reason"] for chunk in chunks} == {"none"}
+
+
+def test_structure_v1_keeps_noisy_pdf_menu_as_single_fallback_chunk(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "menu.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    class _Reader:
+        pages = [
+            _PdfPage(
+                "\n".join(
+                    [
+                        "Меню",
+                        "Назад",
+                        "Далее",
+                        "Личный кабинет",
+                        "Карта сайта",
+                        "Полезный текст о пересдаче",
+                    ]
+                )
+            )
+        ]
+
+        def __init__(self, path: str) -> None:
+            assert path == str(pdf_path)
+
+    monkeypatch.setattr("src.server.app.document_ingestion.PdfReader", _Reader)
+    parsed = load_document(pdf_path, root_dir=tmp_path)
+
+    chunks = build_chunk_records(
+        parsed,
+        chunk_size=900,
+        overlap=0,
+        indexed_at="2026-03-22T00:00:00Z",
+        chunk_strategy="structure_v1",
+    )
+
+    assert len(chunks) == 1
+    assert chunks[0].metadata["chunk_fallback_reason"] == "pdf_line_fallback"
+
+
+def test_structure_v1_splits_long_block_under_hard_limit_with_exact_offsets(tmp_path):
+    txt_path = tmp_path / "long.txt"
+    text = " ".join(f"слово{index}" for index in range(260))
+    txt_path.write_text(text, encoding="utf-8")
+    parsed = load_document(txt_path, root_dir=tmp_path)
+    source_text = parsed.sections[0].text
+
+    chunks = build_chunk_records(
+        parsed,
+        chunk_size=900,
+        overlap=0,
+        indexed_at="2026-03-22T00:00:00Z",
+        chunk_strategy="structure_v1",
+    )
+
+    assert len(chunks) > 1
+    assert max(len(chunk.page_content) for chunk in chunks) <= 900
+    spans = [
+        (chunk.metadata["char_start"], chunk.metadata["char_end"], chunk.page_content)
+        for chunk in chunks
+    ]
+    assert spans[0][0] == 0
+    assert spans[-1][1] == len(source_text)
+    assert all(previous[1] == current[0] for previous, current in zip(spans, spans[1:]))
+    assert all(source_text[start:end].strip() == content for start, end, content in spans)
+
+
+def test_structure_v1_falls_back_for_unstructured_text_and_records_reason(tmp_path):
+    txt_path = tmp_path / "plain.txt"
+    txt_path.write_text(" ".join(["текст"] * 240), encoding="utf-8")
+    parsed = load_document(txt_path, root_dir=tmp_path)
+
+    chunks = build_chunk_records(
+        parsed,
+        chunk_size=900,
+        overlap=0,
+        indexed_at="2026-03-22T00:00:00Z",
+        chunk_strategy="structure_v1",
+    )
+
+    assert chunks
+    assert {chunk.metadata["chunk_strategy"] for chunk in chunks} == {"structure_v1"}
+    assert any(chunk.metadata.get("chunk_fallback_reason") for chunk in chunks)
+
+
+def test_structure_v1_chunk_ids_are_deterministic_for_same_document(tmp_path):
+    docx_path = tmp_path / "deterministic.docx"
+    _write_docx(
+        docx_path,
+        title="Детерминизм",
+        paragraphs=["Раздел", "Стабильный текст для чанкинга."],
+        paragraph_styles=["Heading1", None],
+    )
+    parsed = load_document(docx_path, root_dir=tmp_path)
+
+    first = build_chunk_records(
+        parsed,
+        chunk_size=900,
+        overlap=0,
+        indexed_at="2026-03-22T00:00:00Z",
+        chunk_strategy="structure_v1",
+    )
+    second = build_chunk_records(
+        parsed,
+        chunk_size=900,
+        overlap=0,
+        indexed_at="2026-03-22T00:00:00Z",
+        chunk_strategy="structure_v1",
+    )
+
+    assert [(chunk.id, chunk.page_content, chunk.metadata) for chunk in second] == [
+        (chunk.id, chunk.page_content, chunk.metadata) for chunk in first
+    ]
 
 
 def test_index_directory_reports_extension_reason_counts_and_no_text_rate(tmp_path, monkeypatch):
@@ -923,6 +1301,79 @@ def test_index_directory_audit_only_does_not_create_indexes(tmp_path, monkeypatc
     assert not lexical_index_path.exists()
 
 
+def test_index_directory_passes_chunk_strategy_to_written_metadata(tmp_path, monkeypatch):
+    input_dir = tmp_path / "docs"
+    persist_dir = tmp_path / "db"
+    input_dir.mkdir()
+    (input_dir / "guide.txt").write_text("Полезный текст для индексации", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "src.server.app.document_ingestion.get_embedding_function", lambda: _FakeEmbeddings()
+    )
+
+    summary = index_directory(
+        input_dir,
+        persist_dir,
+        collection_name="test_docs",
+        rebuild=True,
+        chunk_strategy="structure_v1",
+    )
+    store = Chroma(
+        collection_name="test_docs",
+        persist_directory=str(persist_dir),
+        embedding_function=_FakeEmbeddings(),
+    )
+    stored = store._collection.get(include=["metadatas"])
+
+    assert summary.indexed_files == 1
+    assert {metadata["chunk_strategy"] for metadata in _stored_metadatas(stored)} == {
+        "structure_v1"
+    }
+
+
+def test_index_directory_rejects_unknown_chunk_strategy(tmp_path):
+    input_dir = tmp_path / "docs"
+    persist_dir = tmp_path / "db"
+    input_dir.mkdir()
+    (input_dir / "guide.txt").write_text("Полезный текст для индексации", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="chunk strategy"):
+        index_directory(
+            input_dir,
+            persist_dir,
+            collection_name="test_docs",
+            rebuild=True,
+            chunk_strategy="semantic_v9",
+        )
+
+
+def test_index_directory_rejects_strategy_change_without_rebuild(tmp_path, monkeypatch):
+    input_dir = tmp_path / "docs"
+    persist_dir = tmp_path / "db"
+    input_dir.mkdir()
+    (input_dir / "guide.txt").write_text("Полезный текст для индексации", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "src.server.app.document_ingestion.get_embedding_function", lambda: _FakeEmbeddings()
+    )
+    index_directory(
+        input_dir,
+        persist_dir,
+        collection_name="test_docs",
+        rebuild=True,
+        chunk_strategy="fixed",
+    )
+
+    with pytest.raises(ValueError, match="chunk strategy"):
+        index_directory(
+            input_dir,
+            persist_dir,
+            collection_name="test_docs",
+            rebuild=False,
+            chunk_strategy="structure_v1",
+        )
+
+
 def test_index_directory_does_not_duplicate_chunks_and_rebuilds(tmp_path, monkeypatch):
     input_dir = tmp_path / "docs"
     persist_dir = tmp_path / "db"
@@ -996,9 +1447,7 @@ def test_index_directory_deletes_stale_documents_without_rebuild(tmp_path, monke
         embedding_function=_FakeEmbeddings(),
     )
     initial = store._collection.get(include=["metadatas"])
-    initial_document_ids = {
-        metadata["document_id"] for metadata in initial["metadatas"] if metadata is not None
-    }
+    initial_document_ids = {metadata["document_id"] for metadata in _stored_metadatas(initial)}
     assert len(initial_document_ids) == 2
 
     stale_path.unlink()
@@ -1006,7 +1455,7 @@ def test_index_directory_deletes_stale_documents_without_rebuild(tmp_path, monke
 
     after_cleanup = store._collection.get(include=["metadatas"])
     remaining_document_ids = {
-        metadata["document_id"] for metadata in after_cleanup["metadatas"] if metadata is not None
+        metadata["document_id"] for metadata in _stored_metadatas(after_cleanup)
     }
 
     assert len(remaining_document_ids) == 1

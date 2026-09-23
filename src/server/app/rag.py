@@ -56,6 +56,12 @@ _ALLOWED_METADATA_KEYS = {
     "quality_score",
     "quality_reasons",
     "quality_flags",
+    "chunk_strategy",
+    "chunk_fallback_reason",
+    "docx_tables",
+    "docx_has_tables",
+    "docx_table_paragraphs",
+    "docx_read_order_ambiguous",
 }
 
 _llm_chain = None
