@@ -7,3 +7,4 @@
 #include "sections/03-run.typ"
 #set heading(numbering: none)
 #include "sections/04-messages.typ"
+#include "sections/05-configuration.typ"
