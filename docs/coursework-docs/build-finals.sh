@@ -33,8 +33,8 @@ declare -a DOCS=(
     "tz-team|$TZ_ROOT/ТЗ-общее/main.typ|ТЗ-общее.pdf|"
     "pmi|$SCRIPT_DIR/docs/pmi/main.typ|ПМИ-Растворов.pdf|$SCRIPT_DIR"
     "pmi-team|$SCRIPT_DIR/docs/pmi-team/main.typ|ПМИ-общее.pdf|$SCRIPT_DIR"
-    "pz|$SCRIPT_DIR/docs/pz/main.typ|ПЗ.pdf|$SCRIPT_DIR"
-    "ro|$SCRIPT_DIR/docs/ro/main.typ|РО.pdf|$SCRIPT_DIR"
+    "pz|$SCRIPT_DIR/docs/pz/main.typ|ПЗ-Растворов.pdf|$SCRIPT_DIR"
+    "ro|$SCRIPT_DIR/docs/ro/main.typ|РО-Растворов.pdf|$SCRIPT_DIR"
 )
 
 # ── фильтр по аргументам ────────────────────────────────────────────────────
