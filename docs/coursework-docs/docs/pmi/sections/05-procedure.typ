@@ -49,9 +49,9 @@ PYTHONPATH=. uv run python -m src.server.app.index_documents \
   Испытания выполняются в следующем порядке.
 ]
 
-1. Проверить наличие `uv`, Docker и Docker Compose, а для полного прогона RAG --- запущенного Ollama с моделью, указанной в `LLM_MODEL`.
+1. Проверить наличие `uv`, Docker и Docker Compose, а для полного прогона RAG -- запущенного Ollama с моделью, указанной в `LLM_MODEL`.
 2. Установить зависимости командой `uv sync --all-packages --group dev`.
-3. Создать `.env` на основе `.env.example`. Задать как минимум `API_KEY`, `TELEGRAM_SERVICE_KEY`, `OLLAMA_HOST`, `VECTOR_DB_DIR`, `DOCUMENTS_DIR`, `WEB_AUTH_DATABASE_URL`, `DATABASE_URL` и параметры PostgreSQL. Для веб-стенда также задать `WEB_BOOTSTRAP_ADMIN_TOKEN`, для Telegram-бота --- `BOT_TOKEN`.
+3. Создать `.env` на основе `.env.example`. Задать как минимум `API_KEY`, `TELEGRAM_SERVICE_KEY`, `OLLAMA_HOST`, `VECTOR_DB_DIR`, `DOCUMENTS_DIR`, `WEB_AUTH_DATABASE_URL`, `DATABASE_URL` и параметры PostgreSQL. Для веб-стенда также задать `WEB_BOOTSTRAP_ADMIN_TOKEN`, для Telegram-бота -- `BOT_TOKEN`.
 4. Выполнить `./uv-linters.sh`, затем запустить указанные автоматизированные тесты. Каждая команда должна завершиться с кодом 0.
 5. Проверить конфигурацию командой `docker compose config` и запустить стенд командой `docker compose --profile dev up -d`.
 6. Подготовить индекс отдельной командой с `--rebuild` либо проверить автоматическую индексацию пустого хранилища при `PREPARE_RAG_ON_STARTUP=1` и `AUTO_INDEX_ON_STARTUP=1`.
