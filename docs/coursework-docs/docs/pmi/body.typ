@@ -8,3 +8,4 @@
 #include "sections/06-methods.typ"
 #set heading(numbering: none)
 #include "sections/07-sources.typ"
+#include "sections/08-rag-experiments.typ"
